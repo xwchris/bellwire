@@ -1,0 +1,26 @@
+# Dependencies and builds
+node_modules/
+.next/
+dist/
+build/
+coverage/
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+*.local
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Private product documents (never commit)
+docs/private/
+*PRD*.pdf
+*prd*.pdf
+AgentPush 产品需求文档 PRD.pdf
