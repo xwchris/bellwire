@@ -1,0 +1,23 @@
+name = "bellwire-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-20"
+routes = [{ pattern = "api.bellwire.app", custom_domain = true }]
+workers_dev = false
+preview_urls = false
+
+[vars]
+APP_ENV = "production"
+SUPABASE_URL = "https://cvyidqbjjkfzoxykkbea.supabase.co"
+APNS_BUNDLE_ID = "app.bellwire"
+APNS_ENVIRONMENT = "sandbox"
+
+[[queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "bellwire-deliveries"
+
+[[queues.consumers]]
+queue = "bellwire-deliveries"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "bellwire-deliveries-dlq"

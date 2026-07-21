@@ -1,0 +1,451 @@
+import SwiftUI
+import UIKit
+
+struct EventDetailView: View {
+    @EnvironmentObject private var model: AppModel
+    let eventID: String
+    @State private var detail: EventDetail?
+    @State private var loadError: String?
+    @State private var revealedFields: Set<String> = []
+    @State private var showsRawJSON = false
+    @State private var copiedRawJSON = false
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: BellwireSpacing.section) {
+                if let detail {
+                    header(detail)
+                    fields(detail)
+                    delivery(detail)
+                    identifiers(detail)
+                    rawJSON(detail)
+                } else if let loadError {
+                    EmptyState(icon: "wifi.exclamationmark", title: "Event unavailable", message: loadError)
+                        .bellwireSurface(elevated: false)
+                } else {
+                    LoadingEventRows()
+                }
+            }
+            .padding(.horizontal, BellwireSpacing.roomy)
+            .padding(.top, BellwireSpacing.standard)
+            .padding(.bottom, BellwireSpacing.large)
+        }
+        .bellwirePageBackground()
+        .navigationTitle("Event")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let detail {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(item: shareText(detail)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Share event")
+                }
+            }
+        }
+        .task(id: eventID) { await load() }
+    }
+
+    private func header(_ event: EventDetail) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+            Text(event.eventType)
+                .font(BellwireTypography.technicalStrong)
+                .foregroundStyle(BellwireTheme.accent)
+                .padding(.horizontal, 9)
+                .frame(minHeight: 28)
+                .background(BellwireTheme.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: BellwireRadius.small, style: .continuous))
+
+            Text(event.eventType.humanizedEventType)
+                .font(.system(.largeTitle, design: .serif, weight: .regular))
+                .tracking(-0.5)
+                .foregroundStyle(BellwireTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+
+            HStack(spacing: BellwireSpacing.compact) {
+                ProjectAvatarView(name: event.project.name, icon: event.project.icon, size: 24)
+                Text(event.project.name)
+                    .lineLimit(1)
+                if let date = event.occurredDate {
+                    Text("·")
+                    Text(date.formatted(date: .abbreviated, time: .standard))
+                        .monospacedDigit()
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(BellwireTheme.mutedInk)
+            if let date = event.occurredDate {
+                Text("Received \(date.formatted(.relative(presentation: .named)))")
+                    .font(.caption2)
+                    .foregroundStyle(BellwireTheme.mutedInk)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func fields(_ event: EventDetail) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Structured fields", hint: "\(event.data.count) fields")
+            VStack(spacing: 0) {
+                ForEach(Array(event.data.keys.sorted().enumerated()), id: \.element) { index, key in
+                    let isSensitive = event.sensitiveFields.contains(key)
+                    StructuredFieldRow(
+                        key: key,
+                        value: event.data[key]?.displayValue ?? "—",
+                        isSensitive: isSensitive,
+                        isRevealed: revealedFields.contains(key),
+                        reveal: { revealedFields.insert(key) }
+                    )
+                    if index < event.data.count - 1 { Divider().overlay(BellwireTheme.separator) }
+                }
+            }
+            .padding(.horizontal, BellwireSpacing.standard)
+            .bellwireSurface(radius: BellwireRadius.card, elevated: false)
+        }
+    }
+
+    private func delivery(_ event: EventDetail) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Delivery", hint: event.deliveries.isEmpty ? "Waiting" : nil)
+            VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                DeliveryTimelineView(deliveries: event.deliveries)
+                if event.deliveries.isEmpty {
+                    Divider().overlay(BellwireTheme.separator)
+                    Text("Waiting for a registered device or the next delivery attempt.")
+                        .font(.caption)
+                        .foregroundStyle(BellwireTheme.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(BellwireSpacing.standard)
+            .bellwireSurface(radius: BellwireRadius.card, elevated: false)
+        }
+    }
+
+    private func rawJSON(_ event: EventDetail) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            HStack {
+                Text("Raw JSON")
+                    .bellwireTechnicalLabel()
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = redactedJSON(event)
+                    copiedRawJSON = true
+                    BellwireHaptics.success()
+                } label: {
+                    Label(copiedRawJSON ? "Copied" : "Copy", systemImage: copiedRawJSON ? "checkmark" : BellwireIcons.copy)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BellwireTheme.accent)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(PressableButtonStyle())
+            }
+            DisclosureGroup(isExpanded: $showsRawJSON) {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Text(redactedJSON(event))
+                        .font(BellwireTypography.technical)
+                        .foregroundStyle(BellwireTheme.secondaryInk)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.top, BellwireSpacing.standard)
+                }
+            } label: {
+                Label(showsRawJSON ? "Hide payload" : "Show redacted payload", systemImage: "curlybraces")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BellwireTheme.ink)
+            }
+            .padding(BellwireSpacing.standard)
+            .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)
+                    .stroke(BellwireTheme.separator, lineWidth: 1)
+            }
+        }
+    }
+
+    private func identifiers(_ event: EventDetail) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Technical")
+            VStack(spacing: 0) {
+                StructuredFieldRow(key: "event_id", value: event.id)
+                Divider().overlay(BellwireTheme.separator)
+                StructuredFieldRow(key: "idempotency_key", value: event.idempotencyKey)
+            }
+            .padding(.horizontal, BellwireSpacing.standard)
+            .bellwireSurface(radius: BellwireRadius.card, elevated: false)
+        }
+    }
+
+    private func load() async {
+        loadError = nil
+        do {
+            detail = try await model.loadEvent(id: eventID)
+            await model.markRead(id: eventID)
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func redactedJSON(_ event: EventDetail) -> String {
+        var values = event.data
+        for key in event.sensitiveFields where !revealedFields.contains(key) { values[key] = .string("••••••") }
+        guard let data = try? JSONEncoder().encode(values),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        else { return "{}" }
+        return String(data: pretty, encoding: .utf8) ?? "{}"
+    }
+
+    private func shareText(_ event: EventDetail) -> String {
+        """
+        \(event.eventType.humanizedEventType)
+        Project: \(event.project.name)
+        Event ID: \(event.id)
+
+        \(redactedJSON(event))
+        """
+    }
+}
+
+struct ProjectDetailView: View {
+    @EnvironmentObject private var model: AppModel
+    let projectID: String
+    @State private var overview: ProjectOverview?
+    @State private var events: [InboxEvent] = []
+    @State private var errorMessage: String?
+    @State private var isUpdating = false
+    @State private var copiedEndpoint = false
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: BellwireSpacing.section) {
+                if let overview {
+                    projectHeader(overview)
+                    health(overview)
+                    liveSurfaces(overview)
+                    recentEvents
+                    eventTypes(overview)
+                    endpoint(overview)
+                } else if let errorMessage {
+                    EmptyState(icon: "wifi.exclamationmark", title: "Project unavailable", message: errorMessage)
+                        .bellwireSurface(elevated: false)
+                } else {
+                    LoadingEventRows()
+                }
+            }
+            .padding(.horizontal, BellwireSpacing.roomy)
+            .padding(.top, BellwireSpacing.standard)
+            .padding(.bottom, BellwireSpacing.large)
+        }
+        .bellwirePageBackground()
+        .navigationTitle(overview?.name ?? "Project")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let project = overview {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(project.status == "paused" ? "Resume" : "Pause") {
+                        Task { await togglePause(project) }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BellwireTheme.accent)
+                    .disabled(isUpdating)
+                    .accessibilityHint(project.status == "paused" ? "Resumes project notifications" : "Pauses project notifications")
+                }
+            }
+        }
+        .refreshable { await load() }
+        .task(id: projectID) { await load() }
+    }
+
+    private func projectHeader(_ project: ProjectOverview) -> some View {
+        HStack(spacing: BellwireSpacing.standard) {
+            ProjectAvatarView(name: project.name, icon: project.icon, size: 64)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(project.name)
+                    .font(.system(.title, design: .serif, weight: .regular))
+                    .foregroundStyle(BellwireTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: BellwireSpacing.compact) {
+                    StatusBadgeView(
+                        text: project.status == "paused" ? "Paused" : "Active",
+                        color: project.status == "paused" ? BellwireTheme.mutedInk : BellwireTheme.success
+                    )
+                    Text(project.category.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(BellwireTheme.mutedInk)
+                }
+            }
+            Spacer()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func liveSurfaces(_ project: ProjectOverview) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Live surfaces", hint: project.liveSurfaces.isEmpty ? nil : "\(project.liveSurfaces.count) active")
+            if project.liveSurfaces.isEmpty {
+                EmptyState(
+                    icon: "waveform.path.ecg",
+                    title: "No live surfaces",
+                    message: "This project has not published a live progress, metric, or alert surface."
+                )
+                .bellwireSurface(elevated: false)
+            } else {
+                ForEach(project.liveSurfaces) { surface in
+                    LiveSurfaceCard(surface: surface)
+                }
+            }
+        }
+    }
+
+    private func health(_ project: ProjectOverview) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Delivery health · 24h", hint: project.deliveryHealth.status.capitalized)
+            HStack(spacing: 10) {
+                healthMetric(project.deliveryHealth.accepted, "Accepted", BellwireTheme.success)
+                healthMetric(project.deliveryHealth.queued, "Queued", BellwireTheme.warning)
+                healthMetric(project.deliveryHealth.failed, "Failed", BellwireTheme.danger)
+            }
+        }
+    }
+
+    private func healthMetric(_ value: Int, _ title: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(value.formatted())
+                .font(BellwireTypography.metric)
+                .monospacedDigit()
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(BellwireTheme.mutedInk)
+        }
+        .foregroundStyle(BellwireTheme.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .bellwireSurface(radius: BellwireRadius.card, elevated: false)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func endpoint(_ project: ProjectOverview) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Event endpoint", hint: copiedEndpoint ? "Copied" : nil)
+            VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                Text(fullEndpoint(project))
+                    .font(BellwireTypography.technical)
+                    .foregroundStyle(BellwireTheme.secondaryInk)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    UIPasteboard.general.string = fullEndpoint(project)
+                    copiedEndpoint = true
+                    BellwireHaptics.success()
+                } label: {
+                    Label(copiedEndpoint ? "Endpoint copied" : "Copy endpoint", systemImage: copiedEndpoint ? "checkmark" : BellwireIcons.copy)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BellwireTheme.accentInk)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(BellwireTheme.accent, in: RoundedRectangle(cornerRadius: BellwireRadius.small, style: .continuous))
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityHint("Copies the full event endpoint")
+            }
+            .padding(BellwireSpacing.standard)
+            .bellwireSurface(radius: BellwireRadius.card, elevated: false)
+        }
+    }
+
+    private func eventTypes(_ project: ProjectOverview) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Configured event types", hint: schemaHint(project))
+            if project.eventSchemas.isEmpty {
+                EmptyState(
+                    icon: "curlybraces",
+                    title: "No event types configured",
+                    message: "Your Agent can add schema-backed event types when it wires this project."
+                )
+                .bellwireSurface(elevated: false)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 135), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(project.eventSchemas) { schema in
+                        HStack(spacing: BellwireSpacing.compact) {
+                            Text(schema.eventType)
+                                .font(BellwireTypography.technical)
+                                .lineLimit(1)
+                            Spacer(minLength: 2)
+                            Text("v\(schema.version)")
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundStyle(BellwireTheme.mutedInk)
+                        }
+                        .foregroundStyle(BellwireTheme.secondaryInk)
+                        .padding(.horizontal, 11)
+                        .frame(minHeight: 38)
+                        .background(BellwireTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+    }
+
+    private var recentEvents: some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Recent events", hint: events.isEmpty ? nil : "Latest")
+            if events.isEmpty {
+                EmptyState(
+                    icon: "tray",
+                    title: "No events received",
+                    message: "This project has not sent an event yet."
+                )
+                .bellwireSurface(elevated: false)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(events.prefix(8).enumerated()), id: \.element.id) { index, event in
+                        NavigationLink(value: AppRoute.event(event.id)) { EventRow(event: event) }
+                            .buttonStyle(PressableButtonStyle())
+                        if index < min(events.count, 8) - 1 {
+                            Divider().overlay(BellwireTheme.separator).padding(.leading, 52)
+                        }
+                    }
+                }
+                .padding(.horizontal, BellwireSpacing.standard)
+                .bellwireSurface()
+            }
+        }
+    }
+
+    private func load() async {
+        errorMessage = nil
+        do {
+            let result = try await model.loadProject(id: projectID)
+            overview = result.0
+            events = result.1
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func togglePause(_ project: ProjectOverview) async {
+        isUpdating = true
+        defer { isUpdating = false }
+        do {
+            _ = try await model.setProjectPaused(id: project.id, paused: project.status != "paused")
+            BellwireHaptics.success()
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func fullEndpoint(_ project: ProjectOverview) -> String {
+        AppConfig.apiBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            + "/"
+            + project.endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private func schemaHint(_ project: ProjectOverview) -> String? {
+        guard let version = project.eventSchemas.map(\.version).max() else { return nil }
+        return "Schema v\(version)"
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "eventType": "setup.verified",
+  "fields": {
+    "message": {
+      "type": "string",
+      "required": true
+    },
+    "build": {
+      "type": "string",
+      "required": true
+    }
+  },
+  "notification": {
+    "title": "Bellwire is ready",
+    "body": "{{ message }} · {{ build }}",
+    "sound": "default",
+    "group": "setup",
+    "priority": "normal"
+  }
+}

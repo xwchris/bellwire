@@ -1,0 +1,84 @@
+# Integration adapters
+
+## Node.js
+
+Use the existing HTTP client when possible. For Node 20+:
+
+```ts
+type BellwireEvent = {
+  type: string;
+  data: Record<string, unknown>;
+  occurredAt: string;
+};
+
+export async function sendBellwireEvent(
+  projectId: string,
+  idempotencyKey: string,
+  event: BellwireEvent,
+): Promise<void> {
+  const token = process.env.BELLWIRE_INGEST_TOKEN;
+  if (!token) return;
+
+  const response = await fetch(
+    `https://api.bellwire.app/v1/events/${projectId}`,
+    {
+      method: "POST",
+      signal: AbortSignal.timeout(5_000),
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "idempotency-key": idempotencyKey,
+      },
+      body: JSON.stringify(event),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Bellwire request failed with status ${response.status}`);
+  }
+}
+```
+
+Call this after the business transaction succeeds. If notification is best-effort, catch the error at the call site and log only status/code, never the event payload or token.
+
+## Cloudflare Worker
+
+Add `BELLWIRE_INGEST_TOKEN` with `wrangler secret put`, expose it in the environment type, and schedule notification work without delaying the response when that matches the existing reliability model:
+
+```ts
+ctx.waitUntil(
+  sendBellwireEvent(env, projectId, `deploy-${deployment.id}`, {
+    type: "deployment.succeeded",
+    data: { deploymentId: deployment.id, environment: deployment.environment },
+    occurredAt: new Date().toISOString(),
+  }),
+);
+```
+
+Do not put the token in `[vars]` in `wrangler.toml`.
+
+## Shell
+
+```bash
+curl --fail-with-body --silent --show-error \
+  --max-time 5 \
+  --request POST \
+  --header "Authorization: Bearer ${BELLWIRE_INGEST_TOKEN:?missing}" \
+  --header 'Content-Type: application/json' \
+  --header "Idempotency-Key: job-${RUN_ID:?missing}" \
+  --data "${BELLWIRE_EVENT_JSON:?missing}" \
+  "https://api.bellwire.app/v1/events/${BELLWIRE_PROJECT_ID:?missing}"
+```
+
+Build JSON with the repository's existing JSON tool. Do not interpolate untrusted text into hand-written JSON.
+
+## GitHub Actions
+
+Store the Ingest Token as an Actions secret and the project ID as a repository variable:
+
+```yaml
+env:
+  BELLWIRE_INGEST_TOKEN: ${{ secrets.BELLWIRE_INGEST_TOKEN }}
+  BELLWIRE_PROJECT_ID: ${{ vars.BELLWIRE_PROJECT_ID }}
+```
+
+Use `${{ github.run_id }}-${{ github.run_attempt }}` in the idempotency key. Send the event in a final step with the correct `if: success()` or `if: failure()` boundary. Keep shell tracing disabled while constructing authentication headers.

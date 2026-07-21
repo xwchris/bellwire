@@ -1,0 +1,29 @@
+export type TokenKind = "agent" | "ingest";
+
+export function createOpaqueToken(kind: TokenKind): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const encoded = btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  return `${kind === "agent" ? "bw_agent" : "bw_live"}_${encoded}`;
+}
+
+export async function hashSecret(secret: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(secret),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export function createPairingCode(): string {
+  const bytes = crypto.getRandomValues(new Uint32Array(1));
+  return String((bytes[0] ?? 0) % 1_000_000).padStart(6, "0");
+}
+
+export function readBearerToken(value: string | undefined): string | undefined {
+  return value?.match(/^Bearer\s+([^\s]+)$/i)?.[1];
+}

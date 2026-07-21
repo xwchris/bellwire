@@ -1,0 +1,448 @@
+import Foundation
+
+struct AuthSession: Codable, Equatable {
+    let accessToken: String
+    let refreshToken: String
+    let expiresAt: Date
+    let user: AuthUser
+
+    var needsRefresh: Bool {
+        expiresAt.timeIntervalSinceNow < 120
+    }
+}
+
+struct AuthUser: Codable, Equatable {
+    let id: String
+    let email: String?
+}
+
+struct SupabaseTokenResponse: Decodable {
+    let accessToken: String
+    let refreshToken: String
+    let expiresIn: TimeInterval
+    let user: AuthUser
+
+    func session(now: Date = .now) -> AuthSession {
+        AuthSession(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            expiresAt: now.addingTimeInterval(expiresIn),
+            user: user
+        )
+    }
+}
+
+struct ProjectSummary: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let slug: String
+    let icon: String
+    let category: String
+    let status: String
+    let endpoint: String
+    let createdAt: String
+    let updatedAt: String
+
+    var isPaused: Bool { status == "paused" }
+}
+
+struct ProjectsResponse: Decodable {
+    let projects: [ProjectSummary]
+}
+
+struct InboxResponse: Decodable {
+    let events: [InboxEvent]
+}
+
+struct EventPage: Decodable {
+    let events: [InboxEventWithoutProject]
+    let nextCursor: String?
+}
+
+struct InboxEventWithoutProject: Decodable, Identifiable {
+    let id: String
+    let projectId: String
+    let eventType: String
+    let data: [String: JSONValue]
+    let occurredAt: String
+    let receivedAt: String
+    let status: String
+    let readAt: String?
+    let sensitiveFields: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, projectId, eventType, data, occurredAt, receivedAt, status, readAt, sensitiveFields
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        projectId = try container.decode(String.self, forKey: .projectId)
+        eventType = try container.decode(String.self, forKey: .eventType)
+        data = try container.decode([String: JSONValue].self, forKey: .data)
+        occurredAt = try container.decode(String.self, forKey: .occurredAt)
+        receivedAt = try container.decode(String.self, forKey: .receivedAt)
+        status = try container.decode(String.self, forKey: .status)
+        readAt = try container.decodeIfPresent(String.self, forKey: .readAt)
+        sensitiveFields = (try? container.decode([String].self, forKey: .sensitiveFields))
+            ?? Array(data.keys)
+    }
+
+    func inboxEvent(project: ProjectSummary) -> InboxEvent {
+        InboxEvent(
+            id: id,
+            projectId: projectId,
+            eventType: eventType,
+            data: data,
+            occurredAt: occurredAt,
+            receivedAt: receivedAt,
+            status: status,
+            readAt: readAt,
+            project: EventProject(id: project.id, name: project.name, icon: project.icon),
+            sensitiveFields: sensitiveFields
+        )
+    }
+}
+
+struct ProjectOverview: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let slug: String
+    let icon: String
+    let category: String
+    let status: String
+    let endpoint: String
+    let createdAt: String
+    let updatedAt: String
+    let eventSchemas: [EventSchemaSummary]
+    let notificationSurfaces: [NotificationSurfaceSummary]
+    let liveSurfaces: [LiveSurfaceRecord]
+    let deliveryHealth: DeliveryHealth
+}
+
+struct EventSchemaSummary: Decodable, Identifiable {
+    let id: String
+    let eventType: String
+    let version: Int
+}
+
+struct NotificationSurfaceSummary: Decodable, Identifiable {
+    let id: String
+    let eventType: String
+    let priority: String
+    let enabled: Bool
+    let version: Int
+}
+
+struct LiveSurfacesResponse: Decodable {
+    let surfaces: [LiveSurfaceRecord]
+}
+
+struct LiveSurfaceRecord: Decodable, Identifiable, Hashable {
+    let id: String
+    let projectId: String
+    let surfaceKey: String
+    let type: String
+    let title: String
+    let subtitle: String?
+    let content: [String: JSONValue]
+    let action: LiveSurfaceAction?
+    let version: Int
+    let createdAt: String
+    let updatedAt: String
+    let project: EventProject?
+
+    var updatedDate: Date? { ISO8601DateFormatter.bellwireDate(from: updatedAt) }
+}
+
+struct LiveSurfaceAction: Decodable, Hashable {
+    let type: String
+    let title: String
+    let url: String
+}
+
+struct LiveSurfaceMetric: Hashable {
+    let label: String
+    let value: JSONValue
+    let unit: String?
+    let color: String?
+}
+
+extension LiveSurfaceRecord {
+    var metrics: [LiveSurfaceMetric] {
+        guard let values = content["metrics"]?.arrayValue else { return [] }
+        return values.compactMap { value in
+            guard let object = value.objectValue,
+                  let label = object["label"]?.stringValue,
+                  let metricValue = object["value"]
+            else { return nil }
+            return LiveSurfaceMetric(
+                label: label,
+                value: metricValue,
+                unit: object["unit"]?.stringValue,
+                color: object["color"]?.stringValue
+            )
+        }
+    }
+}
+
+struct DeliveryHealth: Decodable {
+    let queued: Int
+    let accepted: Int
+    let failed: Int
+    let status: String
+}
+
+struct InboxEvent: Codable, Identifiable, Hashable {
+    let id: String
+    let projectId: String
+    let eventType: String
+    let data: [String: JSONValue]
+    let occurredAt: String
+    let receivedAt: String
+    let status: String
+    let readAt: String?
+    let project: EventProject
+    let sensitiveFields: [String]
+
+    init(
+        id: String,
+        projectId: String,
+        eventType: String,
+        data: [String: JSONValue],
+        occurredAt: String,
+        receivedAt: String,
+        status: String,
+        readAt: String?,
+        project: EventProject,
+        sensitiveFields: [String]
+    ) {
+        self.id = id
+        self.projectId = projectId
+        self.eventType = eventType
+        self.data = data
+        self.occurredAt = occurredAt
+        self.receivedAt = receivedAt
+        self.status = status
+        self.readAt = readAt
+        self.project = project
+        self.sensitiveFields = sensitiveFields
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, projectId, eventType, data, occurredAt, receivedAt, status, readAt, project, sensitiveFields
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        projectId = try container.decode(String.self, forKey: .projectId)
+        eventType = try container.decode(String.self, forKey: .eventType)
+        data = try container.decode([String: JSONValue].self, forKey: .data)
+        occurredAt = try container.decode(String.self, forKey: .occurredAt)
+        receivedAt = try container.decode(String.self, forKey: .receivedAt)
+        status = try container.decode(String.self, forKey: .status)
+        readAt = try container.decodeIfPresent(String.self, forKey: .readAt)
+        project = try container.decode(EventProject.self, forKey: .project)
+        sensitiveFields = (try? container.decode([String].self, forKey: .sensitiveFields))
+            ?? Array(data.keys)
+    }
+
+    var isUnread: Bool { readAt == nil }
+    var receivedDate: Date? { ISO8601DateFormatter.bellwireDate(from: receivedAt) }
+    var displayTitle: String { eventType.humanizedEventType }
+
+    var preview: String {
+        let sensitive = Set(sensitiveFields)
+        let safeData = data.filter { !sensitive.contains($0.key) }
+        let preferred = ["amount", "product", "message", "status", "currency"]
+        let values = preferred.compactMap { safeData[$0]?.displayValue }.filter { !$0.isEmpty }
+        if !values.isEmpty { return values.prefix(2).joined(separator: " · ") }
+        return safeData.keys.sorted().compactMap { safeData[$0]?.displayValue }.prefix(2).joined(separator: " · ")
+    }
+}
+
+struct EventProject: Codable, Hashable {
+    let id: String
+    let name: String
+    let icon: String
+}
+
+struct EventDetail: Decodable, Identifiable {
+    let id: String
+    let projectId: String
+    let eventType: String
+    let idempotencyKey: String
+    let data: [String: JSONValue]
+    let occurredAt: String
+    let receivedAt: String
+    let status: String
+    let readAt: String?
+    let project: EventProject
+    let sensitiveFields: [String]
+    let deliveries: [DeliveryRecord]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, projectId, eventType, idempotencyKey, data, occurredAt, receivedAt
+        case status, readAt, project, sensitiveFields, deliveries
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        projectId = try container.decode(String.self, forKey: .projectId)
+        eventType = try container.decode(String.self, forKey: .eventType)
+        idempotencyKey = try container.decode(String.self, forKey: .idempotencyKey)
+        data = try container.decode([String: JSONValue].self, forKey: .data)
+        occurredAt = try container.decode(String.self, forKey: .occurredAt)
+        receivedAt = try container.decode(String.self, forKey: .receivedAt)
+        status = try container.decode(String.self, forKey: .status)
+        readAt = try container.decodeIfPresent(String.self, forKey: .readAt)
+        project = try container.decode(EventProject.self, forKey: .project)
+        sensitiveFields = (try? container.decode([String].self, forKey: .sensitiveFields))
+            ?? Array(data.keys)
+        deliveries = try container.decode([DeliveryRecord].self, forKey: .deliveries)
+    }
+
+    var occurredDate: Date? { ISO8601DateFormatter.bellwireDate(from: occurredAt) }
+}
+
+struct DeliveryRecord: Decodable, Identifiable {
+    let id: String
+    let deviceId: String
+    let status: String
+    let attemptCount: Int
+    let providerMessageId: String?
+    let errorCode: String?
+    let sentAt: String?
+}
+
+struct DeviceRecord: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let platform: String
+    let appVersion: String?
+    let lastActiveAt: String
+    let pushEnabled: Bool
+}
+
+struct DevicesResponse: Decodable {
+    let devices: [DeviceRecord]
+}
+
+struct BindingResponse: Decodable, Identifiable {
+    let code: String
+    let expiresAt: String
+    var id: String { code }
+}
+
+struct ReadResponse: Decodable {
+    let readAt: String
+}
+
+struct UpdateProjectPayload: Encodable {
+    let status: String
+}
+
+enum JSONValue: Codable, Hashable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { self = .null }
+        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
+        else if let value = try? container.decode(Double.self) { self = .number(value) }
+        else if let value = try? container.decode(String.self) { self = .string(value) }
+        else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }
+        else { self = .array(try container.decode([JSONValue].self)) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+
+    var displayValue: String {
+        switch self {
+        case .string(let value): return value
+        case .number(let value):
+            return value.formatted(.number.precision(.fractionLength(0...2)))
+        case .bool(let value): return value ? "Yes" : "No"
+        case .object: return "Object"
+        case .array(let value): return "\(value.count) items"
+        case .null: return "—"
+        }
+    }
+
+    var stringValue: String? {
+        if case .string(let value) = self { return value }
+        return nil
+    }
+
+    var numberValue: Double? {
+        if case .number(let value) = self { return value }
+        return nil
+    }
+
+    var boolValue: Bool? {
+        if case .bool(let value) = self { return value }
+        return nil
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case .object(let value) = self { return value }
+        return nil
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case .array(let value) = self { return value }
+        return nil
+    }
+}
+
+struct APIErrorEnvelope: Decodable {
+    let error: APIErrorBody
+}
+
+struct APIErrorBody: Decodable {
+    let code: String
+    let message: String
+}
+
+extension ISO8601DateFormatter {
+    static let bellwire: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let bellwireWithoutFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static func bellwireDate(from value: String) -> Date? {
+        bellwire.date(from: value) ?? bellwireWithoutFractionalSeconds.date(from: value)
+    }
+}
+
+extension String {
+    var humanizedEventType: String {
+        split(whereSeparator: { $0 == "." || $0 == "_" || $0 == "-" })
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+}

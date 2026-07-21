@@ -1,0 +1,11 @@
+{
+  "type": "stats",
+  "title": "Bellwire setup",
+  "subtitle": "Live verification",
+  "metrics": [
+    { "label": "API", "value": "Healthy", "color": "green" },
+    { "label": "Push", "value": "Delivered", "color": "blue" },
+    { "label": "Devices", "value": 1, "color": "cyan" },
+    { "label": "Build", "value": "Signed", "color": "purple" }
+  ]
+}

@@ -10,14 +10,21 @@ coverage/
 .env.*
 !.env.example
 *.local
+*.p8
 
 # Editors and OS
 .DS_Store
 .idea/
 .vscode/
+xcuserdata/
+*.xcuserstate
+DerivedData/
 
 # Logs
 *.log
+
+# Local Supabase CLI state
+supabase/.temp/
 
 # Private product documents (never commit)
 docs/private/

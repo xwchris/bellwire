@@ -1,0 +1,8 @@
+{
+  "type": "setup.verified",
+  "data": {
+    "message": "End-to-end delivery verified",
+    "build": "Signed iPhone debug build"
+  },
+  "occurredAt": "2026-07-20T14:47:00Z"
+}
