@@ -3,6 +3,7 @@ import UIKit
 
 struct EventDetailView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.locale) private var locale
     let eventID: String
     @State private var detail: EventDetail?
     @State private var loadError: String?
@@ -73,14 +74,14 @@ struct EventDetailView: View {
                     .lineLimit(1)
                 if let date = event.occurredDate {
                     Text("·")
-                    Text(date.formatted(date: .abbreviated, time: .standard))
+                    Text(BellwireDateFormatting.dateTime(date, locale: locale))
                         .monospacedDigit()
                 }
             }
             .font(.caption)
             .foregroundStyle(BellwireTheme.mutedInk)
             if let date = event.occurredDate {
-                Text("Received \(date.formatted(.relative(presentation: .named)))")
+                Text("Received \(BellwireDateFormatting.relative(date, locale: locale, unitsStyle: .full))")
                     .font(.caption2)
                     .foregroundStyle(BellwireTheme.mutedInk)
             }

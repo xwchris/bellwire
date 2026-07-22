@@ -322,6 +322,7 @@ struct SettingsView: View {
 }
 
 struct BindingCodeSheet: View {
+    @Environment(\.locale) private var locale
     let binding: BindingResponse
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -387,7 +388,7 @@ struct BindingCodeSheet: View {
                     .bellwireTechnicalLabel()
                 Spacer()
                 if let expiryDate {
-                    Text(expiryDate, style: .relative)
+                    Text(BellwireDateFormatting.relative(expiryDate, locale: locale))
                         .font(BellwireTypography.technicalStrong)
                         .monospacedDigit()
                         .foregroundStyle(BellwireTheme.accent)

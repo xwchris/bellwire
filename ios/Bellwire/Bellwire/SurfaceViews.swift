@@ -226,6 +226,7 @@ private struct SurfaceIdentity: View {
     let surface: LiveSurfaceRecord
     var size: CGFloat
     var fallbackSubtitle: String? = nil
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -251,7 +252,9 @@ private struct SurfaceIdentity: View {
     private var subtitle: String {
         if let subtitle = surface.subtitle, !subtitle.isEmpty { return subtitle }
         if let fallbackSubtitle { return fallbackSubtitle }
-        if let updatedDate = surface.updatedDate { return "updated \(relativeString(from: updatedDate))" }
+        if let updatedDate = surface.updatedDate {
+            return "updated \(BellwireDateFormatting.relative(updatedDate, locale: locale))"
+        }
         return surface.project?.name ?? "Live surface"
     }
 }
@@ -275,6 +278,7 @@ private struct SurfaceTypeBadge: View {
 private struct SurfaceFooter: View {
     let surface: LiveSurfaceRecord
     var showsProject = true
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(spacing: 6) {
@@ -283,7 +287,7 @@ private struct SurfaceFooter: View {
             }
             if showsProject, surface.project != nil, surface.updatedDate != nil { Text("·") }
             if let date = surface.updatedDate {
-                Text(relativeString(from: date))
+                Text(BellwireDateFormatting.relative(date, locale: locale))
                     .monospacedDigit()
             }
             Spacer(minLength: 8)
@@ -461,12 +465,6 @@ private func surfaceProgress(_ surface: LiveSurfaceRecord) -> Double {
     let value = surface.content["value"]?.numberValue ?? 0
     let upper = surface.content["upperLimit"]?.numberValue ?? 1
     return upper > 0 ? value / upper : 0
-}
-
-private func relativeString(from date: Date) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .abbreviated
-    return formatter.localizedString(for: date, relativeTo: .now)
 }
 
 private func surfaceColor(_ name: String?, fallback: Color = BellwireTheme.secondaryInk) -> Color {

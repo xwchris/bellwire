@@ -29,3 +29,34 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         AppLanguage(rawValue: rawValue) ?? .system
     }
 }
+
+enum BellwireDateFormatting {
+    static func relative(
+        _ date: Date,
+        relativeTo referenceDate: Date = .now,
+        locale: Locale,
+        unitsStyle: RelativeDateTimeFormatter.UnitsStyle = .abbreviated
+    ) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = locale
+        formatter.unitsStyle = unitsStyle
+        return formatter.localizedString(for: date, relativeTo: referenceDate)
+    }
+
+    static func headerDate(_ date: Date, locale: Locale) -> String {
+        date.formatted(
+            .dateTime
+                .locale(locale)
+                .weekday(.wide)
+                .month(.abbreviated)
+                .day()
+        )
+    }
+
+    static func dateTime(_ date: Date, locale: Locale) -> String {
+        date.formatted(
+            Date.FormatStyle(date: .abbreviated, time: .standard)
+                .locale(locale)
+        )
+    }
+}

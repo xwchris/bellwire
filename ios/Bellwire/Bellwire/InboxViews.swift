@@ -328,6 +328,7 @@ enum EventFilter: String, CaseIterable, Identifiable {
 
 struct InboxView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.locale) private var locale
     @State private var path: [AppRoute] = []
     let onOpenEvents: (_ preferUnread: Bool) -> Void
 
@@ -373,7 +374,7 @@ struct InboxView: View {
     private var homeHeader: some View {
         HStack(alignment: .center, spacing: BellwireSpacing.standard) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                Text(BellwireDateFormatting.headerDate(.now, locale: locale))
                     .bellwireTechnicalLabel()
                 Text(LocalizedStringKey(greeting))
                     .font(BellwireTypography.pageTitle)
@@ -501,6 +502,7 @@ struct InboxView: View {
 
 struct EventRow: View {
     let event: InboxEvent
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(spacing: BellwireSpacing.small) {
@@ -530,7 +532,7 @@ struct EventRow: View {
             }
             Spacer(minLength: BellwireSpacing.compact)
             if let date = event.receivedDate {
-                Text(date, style: .relative)
+                Text(BellwireDateFormatting.relative(date, locale: locale))
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(BellwireTheme.mutedInk)

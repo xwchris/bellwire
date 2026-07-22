@@ -22,4 +22,21 @@ describe("iOS Inbox preview", () => {
       rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   });
+
+  it("formats dates using the in-app language instead of the system locale", () => {
+    const temporaryDirectory = mkdtempSync(join(tmpdir(), "bellwire-ios-locale-"));
+    const executable = join(temporaryDirectory, "LocalizationCheck");
+    try {
+      execFileSync("xcrun", [
+        "swiftc",
+        "ios/Bellwire/Bellwire/Localization.swift",
+        "test/LocalizationCheck.swift",
+        "-o",
+        executable,
+      ], { stdio: "pipe" });
+      expect(() => execFileSync(executable, { stdio: "pipe" })).not.toThrow();
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
 });
