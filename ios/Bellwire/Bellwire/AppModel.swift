@@ -48,6 +48,21 @@ final class AppModel: ObservableObject {
     }
 
     init() {
+#if DEBUG
+        if let mode = Self.screenshotMode {
+            session = mode == "welcome" ? nil : AuthSession(
+                accessToken: "app-store-screenshot",
+                refreshToken: "app-store-screenshot",
+                expiresAt: .distantFuture,
+                user: AuthUser(id: "screenshot-user", email: "hello@bellwire.app")
+            )
+            if mode != "welcome" {
+                UserDefaults.standard.set(true, forKey: "notificationOnboardingSeen")
+                loadScreenshotFixtures()
+            }
+            return
+        }
+#endif
         session = keychain.read()
     }
 
@@ -61,6 +76,9 @@ final class AppModel: ObservableObject {
     }
 
     func bootstrap() async {
+#if DEBUG
+        if Self.screenshotMode != nil { return }
+#endif
         await refreshNotificationStatus()
         guard isAuthenticated else { return }
         if notificationPermission == .authorized {
@@ -68,6 +86,80 @@ final class AppModel: ObservableObject {
         }
         await loadDashboard(showLoading: true)
     }
+
+#if DEBUG
+    private static var screenshotMode: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-BellwireScreenshot"),
+              arguments.indices.contains(index + 1)
+        else { return nil }
+        return arguments[index + 1]
+    }
+
+    private func loadScreenshotFixtures() {
+        let now = "2026-07-22T16:28:00Z"
+        let earlier = "2026-07-22T16:15:00Z"
+        let store = ProjectSummary(
+            id: "store", name: "Northstar Store", slug: "northstar-store", icon: "cart.fill",
+            logoUrl: nil, displayOrder: 0, category: "commerce", status: "active",
+            endpoint: "https://api.bellwire.app/v1/ingest/demo", createdAt: earlier, updatedAt: now
+        )
+        let agent = ProjectSummary(
+            id: "agent", name: "Weekly Report Agent", slug: "weekly-report-agent", icon: "gearshape.2.fill",
+            logoUrl: nil, displayOrder: 1, category: "automation", status: "active",
+            endpoint: "https://api.bellwire.app/v1/ingest/demo", createdAt: earlier, updatedAt: now
+        )
+        let deploy = ProjectSummary(
+            id: "deploy", name: "Production Deploy", slug: "production-deploy", icon: "shippingbox.fill",
+            logoUrl: nil, displayOrder: 2, category: "engineering", status: "active",
+            endpoint: "https://api.bellwire.app/v1/ingest/demo", createdAt: earlier, updatedAt: now
+        )
+        projects = [store, agent, deploy]
+        liveSurfaces = [
+            LiveSurfaceRecord(
+                id: "surface-agent", projectId: agent.id, surfaceKey: "weekly-run", type: "progress",
+                title: "Weekly report", subtitle: "Analyzing 18 sources", content: [
+                    "percentage": .number(72),
+                    "metrics": .array([
+                        .object(["label": .string("Sources"), "value": .number(18)]),
+                        .object(["label": .string("Complete"), "value": .string("72%")])
+                    ])
+                ], action: nil, displayOrder: 0, version: 1, createdAt: earlier, updatedAt: now,
+                project: EventProject(id: agent.id, name: agent.name, icon: agent.icon, logoUrl: nil)
+            )
+        ]
+        events = [
+            InboxEvent(
+                id: "payment", projectId: store.id, eventType: "payment.received",
+                data: ["amount": .string("$128.00"), "product": .string("Creator Plan")],
+                occurredAt: now, receivedAt: now, status: "delivered", readAt: nil,
+                project: EventProject(id: store.id, name: store.name, icon: store.icon, logoUrl: nil),
+                sensitiveFields: []
+            ),
+            InboxEvent(
+                id: "agent-run", projectId: agent.id, eventType: "agent.run.in_progress",
+                data: ["status": .string("Running"), "message": .string("Weekly report")],
+                occurredAt: earlier, receivedAt: earlier, status: "delivered", readAt: nil,
+                project: EventProject(id: agent.id, name: agent.name, icon: agent.icon, logoUrl: nil),
+                sensitiveFields: []
+            ),
+            InboxEvent(
+                id: "deployment", projectId: deploy.id, eventType: "deployment.completed",
+                data: ["status": .string("Production"), "message": .string("Build 184")],
+                occurredAt: earlier, receivedAt: earlier, status: "delivered", readAt: earlier,
+                project: EventProject(id: deploy.id, name: deploy.name, icon: deploy.icon, logoUrl: nil),
+                sensitiveFields: []
+            )
+        ]
+        devices = [
+            DeviceRecord(
+                id: "iphone", name: "iPhone", platform: "ios", appVersion: "1.0",
+                lastActiveAt: now, pushEnabled: true
+            )
+        ]
+        notificationPermission = .authorized
+    }
+#endif
 
     func configureAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
         let nonce = randomNonce()

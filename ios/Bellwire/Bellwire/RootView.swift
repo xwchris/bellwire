@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import SwiftUI
 
 struct RootView: View {
@@ -28,6 +29,23 @@ struct MainTabView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selection: MainTab = .home
     @State private var eventsFilter: EventFilter = .all
+
+    init() {
+#if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-BellwireScreenshot"),
+           arguments.indices.contains(index + 1) {
+            let tab: MainTab
+            switch arguments[index + 1] {
+            case "projects": tab = .projects
+            case "events": tab = .events
+            case "settings": tab = .settings
+            default: tab = .home
+            }
+            _selection = State(initialValue: tab)
+        }
+#endif
+    }
 
     var body: some View {
         TabView(selection: $selection) {
