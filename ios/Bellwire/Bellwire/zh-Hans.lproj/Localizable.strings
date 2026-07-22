@@ -167,7 +167,8 @@
 "No registered devices" = "没有已注册设备";
 "This iPhone appears after notification permission and APNs registration succeed." = "通知权限和 APNs 注册成功后，这台 iPhone 会显示在这里。";
 "Privacy policy" = "隐私政策";
-"Policy link is not configured in this build" = "当前版本尚未配置政策链接";
+"How Bellwire handles account, device, and project data" = "了解 Bellwire 如何处理账户、设备与项目数据";
+"Opens the Bellwire privacy policy in your browser" = "在浏览器中打开 Bellwire 隐私政策";
 "Sign out" = "退出登录";
 "Sign out of Bellwire?" = "退出 Bellwire？";
 "Your local session will be removed. Connected projects and server data are not deleted." = "本地登录状态会被移除，已连接项目和服务端数据不会被删除。";

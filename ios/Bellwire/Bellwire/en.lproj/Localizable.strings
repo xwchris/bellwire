@@ -18,6 +18,8 @@
 "No mail account is configured. Copy the feedback email instead?" = "No mail account is configured. Copy the feedback email instead?";
 "Copy email" = "Copy email";
 "Feedback email copied" = "Feedback email copied";
+"How Bellwire handles account, device, and project data" = "How Bellwire handles account, device, and project data";
+"Opens the Bellwire privacy policy in your browser" = "Opens the Bellwire privacy policy in your browser";
 "Danger zone" = "Danger zone";
 "Delete project" = "Delete project";
 "Delete project?" = "Delete project?";

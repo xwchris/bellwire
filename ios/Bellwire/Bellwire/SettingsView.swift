@@ -5,6 +5,7 @@ import MessageUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openURL) private var openURL
     @State private var isGeneratingBinding = false
     @State private var showsAgentInstructions = false
     @State private var showsSignOutConfirmation = false
@@ -327,15 +328,19 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
             SectionHeaderView(title: "Account")
             VStack(spacing: 0) {
-                SettingsRowView(
-                    icon: "hand.raised",
-                    title: "Privacy policy",
-                    hint: "Policy link is not configured in this build"
-                ) {
-                    Image(systemName: "minus")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(BellwireTheme.mutedInk)
+                Button { openPrivacyPolicy() } label: {
+                    SettingsRowView(
+                        icon: "hand.raised",
+                        title: "Privacy policy",
+                        hint: "How Bellwire handles account, device, and project data"
+                    ) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                    }
                 }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityHint("Opens the Bellwire privacy policy in your browser")
                 Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
                 Button { showsSignOutConfirmation = true } label: {
                     SettingsRowView(
@@ -434,6 +439,11 @@ struct SettingsView: View {
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    private func openPrivacyPolicy() {
+        guard let url = URL(string: "https://bellwire.app/privacy") else { return }
+        openURL(url)
     }
 }
 
