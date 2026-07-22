@@ -18,10 +18,10 @@ struct BellwireMark: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                .fill(BellwireTheme.accent)
+                .fill(BellwireTheme.brandOrange)
             Image(systemName: BellwireIcons.notification)
                 .font(.system(size: size * 0.39, weight: .semibold))
-                .foregroundStyle(BellwireTheme.accentInk)
+                .foregroundStyle(.white)
                 .offset(y: -0.5)
         }
         .frame(width: size, height: size)

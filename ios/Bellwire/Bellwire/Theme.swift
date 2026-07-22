@@ -4,6 +4,8 @@ import UIKit
 enum BellwireTheme {
     // MARK: Brand and semantic color roles
 
+    static let brandOrange = Color(red: 233 / 255, green: 149 / 255, blue: 32 / 255)
+
     static let accent = adaptiveColor(
         light: UIColor(red: 0.74, green: 0.44, blue: 0.06, alpha: 1),
         dark: UIColor(red: 0.96, green: 0.66, blue: 0.18, alpha: 1)
