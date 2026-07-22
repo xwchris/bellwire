@@ -1,12 +1,18 @@
 import SwiftUI
 import UIKit
+import MessageUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isGeneratingBinding = false
     @State private var showsAgentInstructions = false
     @State private var showsSignOutConfirmation = false
+    @State private var showsFeedbackMail = false
+    @State private var showsFeedbackFallback = false
+    @State private var feedbackEmailCopied = false
     @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.system.rawValue
+    @AppStorage(AppAppearance.storageKey) private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
         NavigationStack {
@@ -21,6 +27,7 @@ struct SettingsView: View {
                     connectionSection
                     notificationsSection
                     appPreferencesSection
+                    supportSection
                     devicesSection
                     accountSection
 
@@ -52,6 +59,24 @@ struct SettingsView: View {
                 AgentInstructionSheet()
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showsFeedbackMail) {
+                FeedbackMailView(
+                    isPresented: $showsFeedbackMail,
+                    recipient: feedbackEmail,
+                    subject: "Bellwire Feedback",
+                    body: feedbackBody
+                )
+            }
+            .alert("Feedback unavailable", isPresented: $showsFeedbackFallback) {
+                Button("Copy email") {
+                    UIPasteboard.general.string = feedbackEmail
+                    feedbackEmailCopied = true
+                    BellwireHaptics.success()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("No mail account is configured. Copy the feedback email instead?")
             }
             .confirmationDialog(
                 "Sign out of Bellwire?",
@@ -205,44 +230,94 @@ struct SettingsView: View {
     private var appPreferencesSection: some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
             SectionHeaderView(title: "App")
-            Menu {
-                ForEach(AppLanguage.allCases) { language in
-                    Button {
-                        appLanguage = language.rawValue
-                        BellwireHaptics.selection()
-                    } label: {
-                        if selectedLanguage == language {
-                            Label {
+            VStack(spacing: 0) {
+                Menu {
+                    ForEach(AppLanguage.allCases) { language in
+                        Button {
+                            appLanguage = language.rawValue
+                            BellwireHaptics.selection()
+                        } label: {
+                            if selectedLanguage == language {
+                                Label {
+                                    Text(language.title)
+                                } icon: {
+                                    Image(systemName: "checkmark")
+                                }
+                            } else {
                                 Text(language.title)
-                            } icon: {
-                                Image(systemName: "checkmark")
                             }
-                        } else {
-                            Text(language.title)
                         }
                     }
-                }
-            } label: {
-                SettingsRowView(
-                    icon: "globe",
-                    title: "Language",
-                    hint: "Choose the language used throughout Bellwire"
-                ) {
-                    HStack(spacing: 5) {
-                        Text(selectedLanguage.title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(BellwireTheme.accent)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(BellwireTheme.mutedInk)
+                } label: {
+                    SettingsRowView(
+                        icon: "globe",
+                        title: "Language",
+                        hint: "Choose the language used throughout Bellwire"
+                    ) {
+                        settingSelectionLabel(selectedLanguage.title)
                     }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("Language")
+                .accessibilityValue(Text(selectedLanguage.title))
+                .accessibilityHint("Changes the language used throughout Bellwire")
+
+                Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
+
+                Menu {
+                    ForEach(AppAppearance.allCases) { appearance in
+                        Button {
+                            withAnimation(reduceMotion ? nil : BellwireAnimation.standard) {
+                                appAppearance = appearance.rawValue
+                            }
+                            BellwireHaptics.selection()
+                        } label: {
+                            if selectedAppearance == appearance {
+                                Label {
+                                    Text(appearance.title)
+                                } icon: {
+                                    Image(systemName: "checkmark")
+                                }
+                            } else {
+                                Text(appearance.title)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsRowView(
+                        icon: "circle.lefthalf.filled",
+                        title: "Appearance",
+                        hint: "Choose the appearance used throughout Bellwire"
+                    ) {
+                        settingSelectionLabel(selectedAppearance.title)
+                    }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("Appearance")
+                .accessibilityValue(Text(selectedAppearance.title))
+                .accessibilityHint("Changes Bellwire between light and dark appearance")
+            }
+            .padding(.horizontal, BellwireSpacing.standard)
+            .bellwireSurface()
+        }
+    }
+
+    private var supportSection: some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Support")
+            Button { openFeedback() } label: {
+                SettingsRowView(
+                    icon: feedbackEmailCopied ? "checkmark" : "bubble.left.and.bubble.right",
+                    title: "Send feedback",
+                    hint: feedbackEmailCopied ? "Feedback email copied" : "Help improve Bellwire"
+                ) {
+                    Image(systemName: feedbackEmailCopied ? "checkmark" : "arrow.up.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(feedbackEmailCopied ? BellwireTheme.success : BellwireTheme.mutedInk)
                 }
             }
             .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel("Language")
-            .accessibilityValue(Text(selectedLanguage.title))
-            .accessibilityHint("Changes the language used throughout Bellwire")
+            .accessibilityHint("Opens an email to Bellwire support")
             .padding(.horizontal, BellwireSpacing.standard)
             .bellwireSurface()
         }
@@ -288,6 +363,22 @@ struct SettingsView: View {
         AppLanguage.selected(from: appLanguage)
     }
 
+    private var selectedAppearance: AppAppearance {
+        AppAppearance.selected(from: appAppearance)
+    }
+
+    private func settingSelectionLabel(_ title: LocalizedStringKey) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(BellwireTheme.accent)
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(BellwireTheme.mutedInk)
+        }
+    }
+
     private var accountInitial: String {
         String(accountName.first ?? "B").uppercased()
     }
@@ -315,9 +406,72 @@ struct SettingsView: View {
         return "Bellwire \(version) · build \(build)"
     }
 
+    private var feedbackEmail: String { "feedback@bellwire.app" }
+
+    private var feedbackBody: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        let device = UIDevice.current
+        return """
+        请在这里填写反馈 / Please write your feedback here.
+
+
+        ---
+        Bellwire \(version) (\(build))
+        \(device.localizedModel) · \(device.systemName) \(device.systemVersion)
+        """
+    }
+
+    private func openFeedback() {
+        feedbackEmailCopied = false
+        if MFMailComposeViewController.canSendMail() {
+            showsFeedbackMail = true
+        } else {
+            showsFeedbackFallback = true
+        }
+    }
+
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+}
+
+private struct FeedbackMailView: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let recipient: String
+    let subject: String
+    let body: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
+
+    func makeUIViewController(context: Context) -> MFMailComposeViewController {
+        let controller = MFMailComposeViewController()
+        controller.mailComposeDelegate = context.coordinator
+        controller.setToRecipients([recipient])
+        controller.setSubject(subject)
+        controller.setMessageBody(body, isHTML: false)
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: MFMailComposeViewController, context: Context) {}
+
+    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
+        @Binding private var isPresented: Bool
+
+        init(isPresented: Binding<Bool>) {
+            _isPresented = isPresented
+        }
+
+        func mailComposeController(
+            _ controller: MFMailComposeViewController,
+            didFinishWith result: MFMailComposeResult,
+            error: Error?
+        ) {
+            isPresented = false
+        }
     }
 }
 

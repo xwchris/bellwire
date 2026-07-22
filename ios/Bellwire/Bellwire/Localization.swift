@@ -30,6 +30,36 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppAppearance: String, CaseIterable, Identifiable {
+    static let storageKey = "bellwireAppAppearance"
+
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .system: return "Follow system"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    static func selected(from rawValue: String) -> AppAppearance {
+        AppAppearance(rawValue: rawValue) ?? .system
+    }
+}
+
 enum BellwireDateFormatting {
     static func relative(
         _ date: Date,

@@ -19,9 +19,15 @@ struct LocalizationCheck {
         guard english != chinese, english.lowercased().contains("ago"), chinese.contains("前") else {
             throw LocalizationCheckError.localeWasIgnored(english: english, chinese: chinese)
         }
+
+        guard AppAppearance.selected(from: "dark") == .dark,
+              AppAppearance.selected(from: "unsupported") == .system else {
+            throw LocalizationCheckError.appearanceSelectionFailed
+        }
     }
 }
 
 enum LocalizationCheckError: Error {
     case localeWasIgnored(english: String, chinese: String)
+    case appearanceSelectionFailed
 }
