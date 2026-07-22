@@ -125,11 +125,11 @@ private struct WelcomePreviewRow: View {
                     if isLive {
                         Circle().fill(BellwireTheme.live).frame(width: 6, height: 6)
                     }
-                    Text(title)
+                    Text(LocalizedStringKey(title))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(BellwireTheme.ink)
                 }
-                Text(detail)
+                Text(LocalizedStringKey(detail))
                     .font(.caption)
                     .foregroundStyle(BellwireTheme.mutedInk)
             }
@@ -255,10 +255,10 @@ private struct NotificationValueRow: View {
                 .frame(width: 38, height: 38)
                 .background(BellwireTheme.raisedSurface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(BellwireTheme.ink)
-                Text(detail)
+                Text(LocalizedStringKey(detail))
                     .font(.caption)
                     .foregroundStyle(BellwireTheme.mutedInk)
                     .fixedSize(horizontal: false, vertical: true)

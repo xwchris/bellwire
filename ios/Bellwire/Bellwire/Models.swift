@@ -37,6 +37,7 @@ struct ProjectSummary: Codable, Identifiable, Hashable {
     let name: String
     let slug: String
     let icon: String
+    let logoUrl: String?
     let category: String
     let status: String
     let endpoint: String
@@ -98,7 +99,7 @@ struct InboxEventWithoutProject: Decodable, Identifiable {
             receivedAt: receivedAt,
             status: status,
             readAt: readAt,
-            project: EventProject(id: project.id, name: project.name, icon: project.icon),
+            project: EventProject(id: project.id, name: project.name, icon: project.icon, logoUrl: project.logoUrl),
             sensitiveFields: sensitiveFields
         )
     }
@@ -109,6 +110,7 @@ struct ProjectOverview: Decodable, Identifiable {
     let name: String
     let slug: String
     let icon: String
+    let logoUrl: String?
     let category: String
     let status: String
     let endpoint: String
@@ -266,6 +268,7 @@ struct EventProject: Codable, Hashable {
     let id: String
     let name: String
     let icon: String
+    let logoUrl: String?
 }
 
 struct EventDetail: Decodable, Identifiable {
@@ -338,6 +341,11 @@ struct BindingResponse: Decodable, Identifiable {
 
 struct ReadResponse: Decodable {
     let readAt: String
+}
+
+struct ReadAllResponse: Decodable {
+    let readAt: String
+    let updatedCount: Int
 }
 
 struct UpdateProjectPayload: Encodable {

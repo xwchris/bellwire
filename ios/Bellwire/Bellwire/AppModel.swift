@@ -31,6 +31,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var notificationPermission: NotificationPermissionState = .unknown
     @Published private(set) var isLoading = false
     @Published private(set) var isAuthenticating = false
+    @Published private(set) var isMarkingAllRead = false
     @Published var errorMessage: String?
     @Published var binding: BindingResponse?
     @Published var pendingEventID: String?
@@ -135,6 +136,7 @@ final class AppModel: ObservableObject {
             name: overview.name,
             slug: overview.slug,
             icon: overview.icon,
+            logoUrl: overview.logoUrl,
             category: overview.category,
             status: overview.status,
             endpoint: overview.endpoint,
@@ -173,6 +175,35 @@ final class AppModel: ObservableObject {
             )
         } catch {
             errorMessage = friendlyMessage(error)
+        }
+    }
+
+    @discardableResult
+    func markAllRead() async -> Int {
+        guard unreadCount > 0, !isMarkingAllRead else { return 0 }
+        isMarkingAllRead = true
+        defer { isMarkingAllRead = false }
+        do {
+            let response: ReadAllResponse = try await api.request("v1/inbox/read-all", method: .post)
+            events = events.map { event in
+                guard event.isUnread else { return event }
+                return InboxEvent(
+                    id: event.id,
+                    projectId: event.projectId,
+                    eventType: event.eventType,
+                    data: event.data,
+                    occurredAt: event.occurredAt,
+                    receivedAt: event.receivedAt,
+                    status: event.status,
+                    readAt: response.readAt,
+                    project: event.project,
+                    sensitiveFields: event.sensitiveFields
+                )
+            }
+            return response.updatedCount
+        } catch {
+            errorMessage = friendlyMessage(error)
+            return 0
         }
     }
 
@@ -234,13 +265,20 @@ final class AppModel: ObservableObject {
             let name: String
             let apnsToken: String
             let appVersion: String
+            let installationId: String
         }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         do {
+            let installationId = try keychain.installationID()
             let _: DeviceRecord = try await api.request(
                 "v1/devices",
                 method: .post,
-                body: Payload(name: UIDevice.current.name, apnsToken: token, appVersion: version)
+                body: Payload(
+                    name: UIDevice.current.name,
+                    apnsToken: token,
+                    appVersion: version,
+                    installationId: installationId
+                )
             )
             let response: DevicesResponse = try await api.request("v1/devices")
             devices = response.devices

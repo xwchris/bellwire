@@ -72,13 +72,19 @@ export class SupabaseBellwireRepository implements BellwireRepository {
   }
 
   async saveDevice(device: Device): Promise<Device> {
-    const row = deviceRow(device);
-    delete row.id;
-    delete row.created_at;
-    const rows = await this.request<JsonRecord[]>("/devices?on_conflict=apns_token", {
+    const rows = await this.request<JsonRecord[]>("/rpc/register_device", {
       method: "POST",
-      body: row,
-      prefer: "resolution=merge-duplicates,return=representation",
+      body: {
+        p_id: device.id,
+        p_user_id: device.userId,
+        p_installation_id: device.installationId,
+        p_name: device.name,
+        p_apns_token: device.apnsToken,
+        p_app_version: device.appVersion ?? null,
+        p_last_active_at: device.lastActiveAt,
+        p_push_enabled: device.pushEnabled,
+        p_created_at: device.createdAt,
+      },
     });
     return toDevice(requiredFirst(rows));
   }
@@ -379,6 +385,19 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     });
   }
 
+  async markAllEventsRead(projectIds: string[], readAt: string): Promise<number> {
+    if (projectIds.length === 0) return 0;
+    const rows = await this.request<JsonRecord[]>(
+      `/events?${params({
+        project_id: `in.(${projectIds.join(",")})`,
+        read_at: "is.null",
+        select: "id",
+      })}`,
+      { method: "PATCH", body: { read_at: readAt }, prefer: "return=representation" },
+    );
+    return rows.length;
+  }
+
   async createDeliveryIfAbsent(delivery: Delivery): Promise<CreateDeliveryResult> {
     const rows = await this.request<JsonRecord[]>(
       "/deliveries?on_conflict=event_id,device_id",
@@ -541,7 +560,7 @@ function optionalString(value: unknown): string | undefined {
 function projectRow(value: Project): JsonRecord {
   return {
     id: value.id, user_id: value.userId, name: value.name, slug: value.slug,
-    icon: value.icon, category: value.category, status: value.status,
+    icon: value.icon, logo_url: value.logoUrl ?? null, category: value.category, status: value.status,
     endpoint: value.endpoint, created_at: value.createdAt, updated_at: value.updatedAt,
   };
 }
@@ -549,23 +568,16 @@ function projectRow(value: Project): JsonRecord {
 function toProject(row: JsonRecord): Project {
   return {
     id: String(row.id), userId: String(row.user_id), name: String(row.name),
-    slug: String(row.slug), icon: String(row.icon), category: String(row.category),
+    slug: String(row.slug), icon: String(row.icon), logoUrl: optionalString(row.logo_url), category: String(row.category),
     status: row.status === "paused" ? "paused" : "active", endpoint: String(row.endpoint),
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
   };
 }
 
-function deviceRow(value: Device): JsonRecord {
-  return {
-    id: value.id, user_id: value.userId, name: value.name, platform: value.platform,
-    apns_token: value.apnsToken, app_version: value.appVersion ?? null,
-    last_active_at: value.lastActiveAt, push_enabled: value.pushEnabled, created_at: value.createdAt,
-  };
-}
-
 function toDevice(row: JsonRecord): Device {
   return {
-    id: String(row.id), userId: String(row.user_id), name: String(row.name), platform: "ios",
+    id: String(row.id), userId: String(row.user_id), installationId: String(row.installation_id),
+    name: String(row.name), platform: "ios",
     apnsToken: String(row.apns_token), appVersion: optionalString(row.app_version),
     lastActiveAt: String(row.last_active_at), pushEnabled: row.push_enabled === true,
     createdAt: String(row.created_at),

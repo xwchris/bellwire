@@ -79,6 +79,7 @@ export interface BellwireRepository {
   listEvents(projectId: string, options: EventListOptions): Promise<EventListPage>;
   getEvent(eventId: string): Promise<BellwireEvent | undefined>;
   markEventRead(eventId: string, readAt: string): Promise<void>;
+  markAllEventsRead(projectIds: string[], readAt: string): Promise<number>;
 
   createDeliveryIfAbsent(delivery: Delivery): Promise<CreateDeliveryResult>;
   claimDelivery(

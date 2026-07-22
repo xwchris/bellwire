@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var isGeneratingBinding = false
     @State private var showsAgentInstructions = false
     @State private var showsSignOutConfirmation = false
+    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.system.rawValue
 
     var body: some View {
         NavigationStack {
@@ -19,6 +20,7 @@ struct SettingsView: View {
                     accountCard
                     connectionSection
                     notificationsSection
+                    appPreferencesSection
                     devicesSection
                     accountSection
 
@@ -200,6 +202,52 @@ struct SettingsView: View {
         }
     }
 
+    private var appPreferencesSection: some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "App")
+            Menu {
+                ForEach(AppLanguage.allCases) { language in
+                    Button {
+                        appLanguage = language.rawValue
+                        BellwireHaptics.selection()
+                    } label: {
+                        if selectedLanguage == language {
+                            Label {
+                                Text(language.title)
+                            } icon: {
+                                Image(systemName: "checkmark")
+                            }
+                        } else {
+                            Text(language.title)
+                        }
+                    }
+                }
+            } label: {
+                SettingsRowView(
+                    icon: "globe",
+                    title: "Language",
+                    hint: "Choose the language used throughout Bellwire"
+                ) {
+                    HStack(spacing: 5) {
+                        Text(selectedLanguage.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.accent)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                    }
+                }
+            }
+            .buttonStyle(PressableButtonStyle())
+            .accessibilityLabel("Language")
+            .accessibilityValue(Text(selectedLanguage.title))
+            .accessibilityHint("Changes the language used throughout Bellwire")
+            .padding(.horizontal, BellwireSpacing.standard)
+            .bellwireSurface()
+        }
+    }
+
     private var accountSection: some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
             SectionHeaderView(title: "Account")
@@ -234,6 +282,10 @@ struct SettingsView: View {
 
     private var accountName: String {
         model.session?.user.email ?? "Apple account"
+    }
+
+    private var selectedLanguage: AppLanguage {
+        AppLanguage.selected(from: appLanguage)
     }
 
     private var accountInitial: String {

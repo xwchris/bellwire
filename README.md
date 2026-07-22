@@ -21,6 +21,8 @@ out of this public repository.
 - Typed event validation, sensitive-field protection, idempotent ingestion,
   project pause controls, and retry-aware delivery health.
 - Cloudflare Queue dispatch and APNs HTTP/2 provider-token authentication.
+- Optional public HTTPS project logos in native project avatars and rich APNs
+  notification attachments, with monogram fallback when an image is absent or fails.
 - Native iOS 17 SwiftUI inbox with Sign in with Apple, Keychain session
   storage, APNs registration, deep links, device management, and light/dark
   appearance.
@@ -62,6 +64,14 @@ npm run build
 npm run ios:build
 ```
 
+The marketing website lives in [`website`](website) as an isolated Vite app,
+so its dependencies and build output do not affect the Worker bundle:
+
+```bash
+npm run web:dev
+npm run web:build
+```
+
 The Worker uses in-memory storage only when `APP_ENV=development` and no
 Supabase URL is configured. Staging and production fail closed unless both
 Supabase settings are present.
@@ -101,6 +111,10 @@ for the app's native ID-token flow.
 Open [`ios/Bellwire/Bellwire.xcodeproj`](ios/Bellwire/Bellwire.xcodeproj) in
 Xcode. The project uses Team `98JU6VDJZU`, bundle ID
 `app.bellwire`, Push Notifications, and Sign in with Apple.
+Rich project-logo notifications also embed the
+`app.bellwire.NotificationService` extension; its App ID and provisioning
+profile must exist for signed device builds. iOS keeps the Bellwire app icon in
+the collapsed notification and shows the project logo as a rich attachment.
 
 An unsigned Simulator build is reproducible with `npm run ios:build`. A signed
 device build additionally requires an Apple Developer account in Xcode, an App
@@ -131,6 +145,7 @@ Ingestion uses a project-scoped Ingest token.
 | `POST` | `/v1/events/:projectId` | Ingest an idempotent event |
 | `POST` | `/v1/projects/:projectId/events/test` | Send an authenticated test event |
 | `GET` | `/v1/inbox` | List the user's recent cross-project events |
+| `POST` | `/v1/inbox/read-all` | Mark every unread owned event as read |
 | `GET` | `/v1/projects/:projectId/events` | List project events |
 | `GET` | `/v1/events/:eventId` | Get event detail and sensitive-field metadata |
 | `POST` | `/v1/events/:eventId/read` | Mark an event read |

@@ -96,6 +96,7 @@ export class BellwireService {
       name,
       slug: `${slugify(name)}-${id.slice(0, 6)}`,
       icon: readNonEmptyString(body.icon) ?? "bolt.horizontal",
+      logoUrl: readProjectLogoUrl(body.logoUrl),
       category: readNonEmptyString(body.category) ?? "general",
       status: "active",
       endpoint: `/v1/events/${id}`,
@@ -133,6 +134,7 @@ export class BellwireService {
       name,
       status,
       icon: readNonEmptyString(body.icon) ?? project.icon,
+      logoUrl: body.logoUrl === undefined ? project.logoUrl : readProjectLogoUrl(body.logoUrl),
       category: readNonEmptyString(body.category) ?? project.category,
       updatedAt: new Date().toISOString(),
     });
@@ -141,15 +143,20 @@ export class BellwireService {
   async registerDevice(principal: Principal, input: unknown) {
     const body = asRecord(input);
     const apnsToken = readNonEmptyString(body.apnsToken);
+    const installationId = readNonEmptyString(body.installationId);
     const name = readNonEmptyString(body.name);
     if (!name) throw invalidRequest("Device name is required");
     if (!apnsToken || !/^[A-Fa-f0-9]{32,256}$/u.test(apnsToken)) {
       throw invalidRequest("A valid APNs device token is required");
     }
+    if (!installationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(installationId)) {
+      throw invalidRequest("Installation ID must be a UUID");
+    }
     const now = new Date().toISOString();
     return this.repository.saveDevice({
       id: crypto.randomUUID(),
       userId: principal.userId,
+      installationId: installationId.toLowerCase(),
       name,
       platform: "ios",
       apnsToken: apnsToken.toLowerCase(),
@@ -298,6 +305,33 @@ export class BellwireService {
     input: unknown,
   ): Promise<LiveSurface> {
     await this.requireOwnedProject(principal, projectId);
+    return this.saveLiveSurface(projectId, surfaceKeyValue, input);
+  }
+
+  async upsertLiveSurfaceFromIngestToken(
+    projectId: string,
+    bearerToken: string | undefined,
+    surfaceKeyValue: string,
+    input: unknown,
+  ): Promise<LiveSurface> {
+    const storedToken = await this.requireIngestToken(projectId, bearerToken);
+    const allowed = await this.repository.consumeRateLimit(
+      `${projectId}:${storedToken.id}:surface`,
+      120,
+      60,
+    );
+    if (!allowed) {
+      throw new ServiceError(429, "RATE_LIMITED", "Surface update rate limit exceeded");
+    }
+    await this.repository.markIngestTokenUsed(storedToken.id, new Date().toISOString());
+    return this.saveLiveSurface(projectId, surfaceKeyValue, input);
+  }
+
+  private async saveLiveSurface(
+    projectId: string,
+    surfaceKeyValue: string,
+    input: unknown,
+  ): Promise<LiveSurface> {
     const surfaceKey = parseSurfaceKey(surfaceKeyValue);
     const body = asRecord(input);
     const type = parseLiveSurfaceType(body.type);
@@ -305,6 +339,10 @@ export class BellwireService {
     const subtitle = readOptionalBoundedString(body.subtitle, "Surface subtitle", 120);
     const content = parseLiveSurfaceContent(type, body);
     const action = parseLiveSurfaceAction(body.action);
+    const existing = await this.repository.getLiveSurface(projectId, surfaceKey);
+    if (existing && sameLiveSurface(existing, { type, title, subtitle, content, action })) {
+      return existing;
+    }
     const now = new Date().toISOString();
     return this.repository.saveLiveSurface({
       id: crypto.randomUUID(),
@@ -333,7 +371,7 @@ export class BellwireService {
       surfaces: groups
         .flatMap(({ project, surfaces }) => surfaces.map((surface) => ({
           ...surface,
-          project: { id: project.id, name: project.name, icon: project.icon },
+          project: { id: project.id, name: project.name, icon: project.icon, logoUrl: project.logoUrl },
         })))
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     };
@@ -392,13 +430,7 @@ export class BellwireService {
     input: IngestEventInput,
   ): Promise<IngestEventResult> {
     const project = await this.requireProject(projectId);
-    const rawToken = readBearerToken(bearerToken);
-    if (!rawToken) throw invalidToken();
-    const storedToken = await this.repository.findIngestTokenByHash(
-      projectId,
-      await hashSecret(rawToken),
-    );
-    if (!storedToken) throw invalidToken();
+    const storedToken = await this.requireIngestToken(projectId, bearerToken);
     const allowed = await this.repository.consumeRateLimit(
       `${projectId}:${storedToken.id}`,
       60,
@@ -447,7 +479,10 @@ export class BellwireService {
     );
     const events = pages
       .flatMap(({ project, page }) =>
-        page.events.map((event) => ({ ...event, project: { id: project.id, name: project.name, icon: project.icon } })),
+        page.events.map((event) => ({
+          ...event,
+          project: { id: project.id, name: project.name, icon: project.icon, logoUrl: project.logoUrl },
+        })),
       )
       .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt))
       .slice(0, limit);
@@ -461,7 +496,7 @@ export class BellwireService {
     const deliveries = await this.repository.listDeliveries(event.id);
     return {
       ...event,
-      project: { id: project.id, name: project.name, icon: project.icon },
+      project: { id: project.id, name: project.name, icon: project.icon, logoUrl: project.logoUrl },
       sensitiveFields: eventSensitiveFields(event),
       deliveries,
     };
@@ -474,6 +509,16 @@ export class BellwireService {
     const readAt = event.readAt ?? new Date().toISOString();
     await this.repository.markEventRead(eventId, readAt);
     return { readAt };
+  }
+
+  async markAllEventsRead(principal: Principal) {
+    const projects = await this.repository.listProjects(principal.userId);
+    const readAt = new Date().toISOString();
+    const updatedCount = await this.repository.markAllEventsRead(
+      projects.map((project) => project.id),
+      readAt,
+    );
+    return { readAt, updatedCount };
   }
 
   async getDeliveryHealth(principal: Principal, projectId: string) {
@@ -613,6 +658,18 @@ export class BellwireService {
     return project;
   }
 
+  private async requireIngestToken(projectId: string, bearerToken: string | undefined) {
+    await this.requireProject(projectId);
+    const rawToken = readBearerToken(bearerToken);
+    if (!rawToken) throw invalidToken();
+    const storedToken = await this.repository.findIngestTokenByHash(
+      projectId,
+      await hashSecret(rawToken),
+    );
+    if (!storedToken) throw invalidToken();
+    return storedToken;
+  }
+
   private async requireOwnedProject(principal: Principal, projectId: string): Promise<Project> {
     const project = await this.requireProject(projectId);
     if (project.userId !== principal.userId) {
@@ -624,6 +681,17 @@ export class BellwireService {
 
 function eventSensitiveFields(event: BellwireEvent): string[] {
   return event.sensitiveFields ?? Object.keys(event.data);
+}
+
+function sameLiveSurface(
+  existing: LiveSurface,
+  next: Pick<LiveSurface, "type" | "title" | "subtitle" | "content" | "action">,
+): boolean {
+  return existing.type === next.type
+    && existing.title === next.title
+    && existing.subtitle === next.subtitle
+    && JSON.stringify(existing.content) === JSON.stringify(next.content)
+    && JSON.stringify(existing.action) === JSON.stringify(next.action);
 }
 
 function invalidRequest(message: string): ServiceError {
@@ -668,6 +736,20 @@ function readOptionalBoundedString(
 ): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   return readBoundedString(value, name, maximum);
+}
+
+function readProjectLogoUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const logoUrl = readBoundedString(value, "Project logo URL", 2_048);
+  try {
+    const parsed = new URL(logoUrl);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || !parsed.hostname) {
+      throw new Error("invalid logo URL");
+    }
+  } catch {
+    throw invalidRequest("Project logo URL must be a public HTTPS URL");
+  }
+  return logoUrl;
 }
 
 function parseSurfaceKey(value: unknown): string {

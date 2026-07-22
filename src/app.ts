@@ -117,6 +117,17 @@ export function createApp(dependencies: {
   });
 
   app.put("/v1/projects/:projectId/surfaces/:surfaceKey", async (context) => {
+    const authorization = context.req.header("authorization");
+    if (/^Bearer\s+bw_live_/iu.test(authorization ?? "")) {
+      return context.json(
+        await dependencies.service.upsertLiveSurfaceFromIngestToken(
+          context.req.param("projectId"),
+          authorization,
+          context.req.param("surfaceKey"),
+          await readJson(context.req.raw),
+        ),
+      );
+    }
     const principal = await scopedPrincipal(context, dependencies.authenticator, "config:write");
     return context.json(
       await dependencies.service.upsertLiveSurface(
@@ -207,6 +218,11 @@ export function createApp(dependencies: {
     return context.json(
       await dependencies.service.getEventDetail(principal, context.req.param("eventId")),
     );
+  });
+
+  app.post("/v1/inbox/read-all", async (context) => {
+    const principal = await scopedPrincipal(context, dependencies.authenticator, "project:read");
+    return context.json(await dependencies.service.markAllEventsRead(principal));
   });
 
   app.post("/v1/events/:eventId/read", async (context) => {

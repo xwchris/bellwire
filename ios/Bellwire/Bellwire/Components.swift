@@ -37,22 +37,33 @@ struct ProjectAvatarView: View {
     let name: String
     let icon: String
     var size: CGFloat = 44
+    var logoURL: URL? = nil
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
                 .fill(avatarGradient)
-            if UIImage(systemName: icon) != nil {
-                Image(systemName: icon)
-                    .font(.system(size: size * 0.38, weight: .semibold))
-            } else {
-                Text(initials)
-                    .font(.system(size: size * 0.32, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.7)
+            Text(initials)
+                .font(.system(size: size * 0.34, weight: .semibold, design: .default))
+                .tracking(-0.35)
+                .minimumScaleFactor(0.7)
+            if let logoURL {
+                AsyncImage(url: logoURL, transaction: Transaction(animation: BellwireAnimation.quick)) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .transition(.opacity)
+                    }
+                }
+                .background(BellwireTheme.surface)
+                .frame(width: size, height: size)
+                .clipped()
             }
         }
         .foregroundStyle(BellwireTheme.accentInk)
         .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.27, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
                 .stroke(Color.black.opacity(0.1), lineWidth: 1)
@@ -61,19 +72,49 @@ struct ProjectAvatarView: View {
     }
 
     private var initials: String {
+        let normalized = name.lowercased()
+        if normalized.contains("videosays") { return "VS" }
+        if normalized.contains("bellwire") { return "BW" }
         let words = name.split(separator: " ").prefix(2)
+        if words.count == 1 {
+            let capitals = name.filter(\.isUppercase)
+            if capitals.count >= 2 { return String(capitals.prefix(2)) }
+        }
         let value = words.compactMap(\.first).map(String.init).joined().uppercased()
         return value.isEmpty ? "BW" : value
     }
 
     private var avatarGradient: LinearGradient {
-        let hue = Double(abs(name.hashValue % 360)) / 360
-        let companion = Color(hue: hue, saturation: 0.34, brightness: 0.84)
+        let colors = avatarColors
         return LinearGradient(
-            colors: [BellwireTheme.accent, companion],
+            colors: colors,
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+    }
+
+    private var avatarColors: [Color] {
+        let normalized = name.lowercased()
+        if normalized.contains("videosays") {
+            return [Color(red: 0.96, green: 0.67, blue: 0.16), Color(red: 0.76, green: 0.43, blue: 0.05)]
+        }
+        if normalized.contains("content") || normalized.contains("growth") {
+            return [Color(red: 0.48, green: 0.79, blue: 0.43), Color(red: 0.25, green: 0.60, blue: 0.31)]
+        }
+        if normalized.contains("bellwire") {
+            return [Color(red: 0.42, green: 0.72, blue: 0.88), Color(red: 0.22, green: 0.51, blue: 0.72)]
+        }
+        if normalized.contains("production") {
+            return [Color(red: 0.71, green: 0.61, blue: 0.88), Color(red: 0.48, green: 0.36, blue: 0.70)]
+        }
+        if normalized.contains("reddit") {
+            return [Color(red: 0.83, green: 0.48, blue: 0.38), Color(red: 0.62, green: 0.29, blue: 0.23)]
+        }
+        let hue = Double(abs(name.hashValue % 360)) / 360
+        return [
+            Color(hue: hue, saturation: 0.38, brightness: 0.88),
+            Color(hue: hue, saturation: 0.52, brightness: 0.66),
+        ]
     }
 }
 
@@ -92,11 +133,11 @@ struct SectionHeaderView: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .bellwireTechnicalLabel()
             Spacer()
             if let hint, !hint.isEmpty {
-                Text(hint)
+                Text(LocalizedStringKey(hint))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(BellwireTheme.accent)
             }
@@ -118,7 +159,7 @@ struct StatusBadgeView: View {
                     .frame(width: 7, height: 7)
                     .shadow(color: color.opacity(0.34), radius: 4)
             }
-            Text(text)
+            Text(LocalizedStringKey(text))
                 .lineLimit(1)
         }
         .font(.caption2.weight(.semibold))
@@ -126,7 +167,7 @@ struct StatusBadgeView: View {
         .padding(.horizontal, 9)
         .frame(minHeight: 26)
         .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: BellwireRadius.small, style: .continuous))
-        .accessibilityLabel(text)
+        .accessibilityLabel(Text(LocalizedStringKey(text)))
     }
 }
 
@@ -151,7 +192,7 @@ struct DigestMetricView: View {
                 .monospacedDigit()
                 .foregroundStyle(isAccented ? BellwireTheme.accent : BellwireTheme.ink)
                 .contentTransition(.numericText())
-            Text(label.lowercased())
+            Text(LocalizedStringKey(label.lowercased()))
                 .font(.caption2)
                 .tracking(0.4)
                 .foregroundStyle(BellwireTheme.mutedInk)
@@ -177,7 +218,7 @@ struct PrimaryButton: View {
                 } else if let systemImage {
                     Image(systemName: systemImage)
                 }
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.body.weight(.semibold))
             }
             .foregroundStyle(BellwireTheme.accentInk)
@@ -200,7 +241,7 @@ struct SecondaryButton: View {
         Button(action: action) {
             HStack(spacing: BellwireSpacing.compact) {
                 if let systemImage { Image(systemName: systemImage) }
-                Text(title).font(.body.weight(.semibold))
+                Text(LocalizedStringKey(title)).font(.body.weight(.semibold))
             }
             .foregroundStyle(BellwireTheme.ink)
             .frame(maxWidth: .infinity)
@@ -224,7 +265,7 @@ struct ErrorBanner: View {
                 Text("Connection issue")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(BellwireTheme.ink)
-                Text(message)
+                Text(LocalizedStringKey(message))
                     .font(.caption)
                     .foregroundStyle(BellwireTheme.secondaryInk)
             }
@@ -261,10 +302,10 @@ struct EmptyState: View {
                 .foregroundStyle(BellwireTheme.accent)
                 .frame(width: 56, height: 56)
                 .background(BellwireTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.headline)
                 .foregroundStyle(BellwireTheme.ink)
-            Text(message)
+            Text(LocalizedStringKey(message))
                 .font(.subheadline)
                 .foregroundStyle(BellwireTheme.secondaryInk)
                 .multilineTextAlignment(.center)
@@ -324,11 +365,11 @@ struct SettingsRowView<Accessory: View>: View {
                 .frame(width: 32, height: 32)
                 .background(BellwireTheme.raisedSurface, in: RoundedRectangle(cornerRadius: BellwireRadius.small, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(tone)
                 if let hint {
-                    Text(hint)
+                    Text(LocalizedStringKey(hint))
                         .font(.caption)
                         .foregroundStyle(BellwireTheme.mutedInk)
                         .lineLimit(2)

@@ -28,14 +28,26 @@ Connect repository state and events to the user's Bellwire cards, inbox, and iPh
    - Prefer a direct post-commit Bellwire call when the application owns the business operation.
    - When a payment, commerce, deployment, or automation provider is the source of truth, read [webhooks.md](references/webhooks.md) and add a provider-specific webhook adapter.
 9. Run the repository's existing tests plus a focused test. Never weaken a business test to make Bellwire pass.
-10. Verify the resulting Surface state or Event Delivery. Do not claim the phone presented a notification when the server only reports `accepted_by_apns`.
+10. Persist and deploy the source-side adapter through the repository's real source of truth. If commit or push is outside the user's request, report that explicitly instead of calling the integration durable.
+11. Verify the integration level using [production-verification.md](references/production-verification.md). Do not claim the phone presented a notification when the server only reports `accepted_by_apns`.
+
+## Integration status
+
+Use these exact boundaries in progress and final reports:
+
+- **Configured:** the Bellwire project, schema, token, Surface, or test Event exists. This is not a production integration.
+- **Integrated, awaiting production verification:** source-side adapter code, runtime secrets, focused tests, and deployment are present, but no real source operation has completed the path.
+- **Production verified:** a real business operation created the expected Event or Surface, Delivery was checked, and any claimed device presentation was confirmed by the user.
+
+Never describe `send-test`, a manually upserted Surface, or secret creation as an actual production integration.
 
 ## Commands
 
 Use [scripts/bellwire.mjs](scripts/bellwire.mjs) for API operations. It defaults to the official hosted API and accepts `BELLWIRE_API_URL` for self-hosted installations.
 
 ```bash
-node <skill-dir>/scripts/bellwire.mjs create-project --name "VideoSays"
+node <skill-dir>/scripts/bellwire.mjs create-project --name "VideoSays" --logo-url "https://videosays.com/logo.png"
+node <skill-dir>/scripts/bellwire.mjs update-project --project <id> --logo-url "https://cdn.example.com/logo.png"
 node <skill-dir>/scripts/bellwire.mjs create-schema --project <id> --file event-spec.json
 node <skill-dir>/scripts/bellwire.mjs create-token --project <id> --name production
 node <skill-dir>/scripts/bellwire.mjs upsert-surface --project <id> --key prod-api --file surface.json
@@ -71,6 +83,9 @@ Use `--json` for machine-readable output. Read [api.md](references/api.md) when 
 - Choose one of the supported native types. Never embed HTML, JavaScript, Swift, CSS, or arbitrary rendering instructions.
 - Prefer a Surface for frequent progress and metric updates; avoid flooding the Event inbox.
 - Use `open_url` actions only when the destination is expected and safe for the user.
+- Project logos must be public HTTPS images no larger than 5 MB. Bellwire uses
+  them in native avatars and expanded rich notifications, then falls back to a
+  project monogram if the image is missing or cannot be downloaded.
 
 ## Verification and recovery
 
@@ -81,7 +96,8 @@ If setup fails, read [troubleshooting.md](references/troubleshooting.md). Check 
 3. Secret availability in the actual runtime.
 4. Payload type and required fields.
 5. Stable `Idempotency-Key` behavior.
-6. Event detail and Delivery status.
-7. iOS notification permission, device registration, and sandbox versus production APNs environment.
+6. Source adapter presence in the deployed version and a real source operation.
+7. Event detail, Surface state, and Delivery status.
+8. iOS notification permission, device registration, and sandbox versus production APNs environment.
 
 Never rotate, revoke, or replace a working token unless the user requested it or compromise is suspected.

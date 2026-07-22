@@ -11,6 +11,9 @@
     "test:watch": "vitest",
     "test:live": "node scripts/live-smoke.mjs",
     "build": "wrangler deploy --dry-run --outdir dist",
+    "web:dev": "npm --prefix website run dev",
+    "web:build": "npm --prefix website run build",
+    "web:preview": "npm --prefix website run preview",
     "ios:build": "xcodebuild -project ios/Bellwire/Bellwire.xcodeproj -scheme Bellwire -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build"
   },
   "dependencies": {

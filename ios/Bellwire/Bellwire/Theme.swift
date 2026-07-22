@@ -5,28 +5,28 @@ enum BellwireTheme {
     // MARK: Brand and semantic color roles
 
     static let accent = adaptiveColor(
-        light: UIColor(red: 0.72, green: 0.43, blue: 0.08, alpha: 1),
-        dark: UIColor(red: 0.96, green: 0.68, blue: 0.24, alpha: 1)
+        light: UIColor(red: 0.74, green: 0.44, blue: 0.06, alpha: 1),
+        dark: UIColor(red: 0.96, green: 0.66, blue: 0.18, alpha: 1)
     )
     static let accentInk = adaptiveColor(
         light: UIColor(red: 0.13, green: 0.09, blue: 0.04, alpha: 1),
         dark: UIColor(red: 0.13, green: 0.09, blue: 0.04, alpha: 1)
     )
     static let background = adaptiveColor(
-        light: UIColor(red: 0.965, green: 0.952, blue: 0.925, alpha: 1),
-        dark: UIColor(red: 0.155, green: 0.148, blue: 0.138, alpha: 1)
+        light: UIColor(red: 0.955, green: 0.942, blue: 0.912, alpha: 1),
+        dark: UIColor(red: 0.145, green: 0.139, blue: 0.129, alpha: 1)
     )
     static let surface = adaptiveColor(
-        light: UIColor(red: 0.995, green: 0.985, blue: 0.962, alpha: 1),
-        dark: UIColor(red: 0.205, green: 0.195, blue: 0.182, alpha: 1)
+        light: UIColor(red: 0.992, green: 0.982, blue: 0.956, alpha: 1),
+        dark: UIColor(red: 0.195, green: 0.187, blue: 0.174, alpha: 1)
     )
     static let raisedSurface = adaptiveColor(
-        light: UIColor(red: 0.935, green: 0.915, blue: 0.875, alpha: 1),
-        dark: UIColor(red: 0.245, green: 0.233, blue: 0.216, alpha: 1)
+        light: UIColor(red: 0.925, green: 0.902, blue: 0.856, alpha: 1),
+        dark: UIColor(red: 0.235, green: 0.224, blue: 0.207, alpha: 1)
     )
     static let tertiarySurface = adaptiveColor(
-        light: UIColor(red: 0.89, green: 0.865, blue: 0.82, alpha: 1),
-        dark: UIColor(red: 0.29, green: 0.275, blue: 0.253, alpha: 1)
+        light: UIColor(red: 0.875, green: 0.846, blue: 0.790, alpha: 1),
+        dark: UIColor(red: 0.282, green: 0.267, blue: 0.245, alpha: 1)
     )
     static let ink = adaptiveColor(
         light: UIColor(red: 0.12, green: 0.112, blue: 0.10, alpha: 1),
@@ -41,8 +41,8 @@ enum BellwireTheme {
         dark: UIColor(red: 0.60, green: 0.57, blue: 0.52, alpha: 1)
     )
     static let separator = adaptiveColor(
-        light: UIColor.black.withAlphaComponent(0.075),
-        dark: UIColor.white.withAlphaComponent(0.09)
+        light: UIColor(red: 0.22, green: 0.18, blue: 0.12, alpha: 0.09),
+        dark: UIColor(red: 0.56, green: 0.52, blue: 0.45, alpha: 0.22)
     )
     static let strongSeparator = adaptiveColor(
         light: UIColor.black.withAlphaComponent(0.16),
@@ -74,6 +74,22 @@ enum BellwireTheme {
         )
     }
 
+    static var amberGlowLeading: RadialGradient {
+        RadialGradient(
+            colors: [accent.opacity(0.09), accent.opacity(0.025), .clear],
+            center: .bottomLeading,
+            startRadius: 4,
+            endRadius: 210
+        )
+    }
+
+    static var cardShadow: Color {
+        adaptiveColor(
+            light: UIColor(red: 0.31, green: 0.24, blue: 0.14, alpha: 0.055),
+            dark: UIColor.black.withAlphaComponent(0.12)
+        )
+    }
+
     private static func adaptiveColor(light: UIColor, dark: UIColor) -> Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark : light
@@ -84,10 +100,14 @@ enum BellwireTheme {
 enum BellwireTypography {
     static let hero = Font.system(.largeTitle, design: .serif, weight: .regular)
     static let pageTitle = Font.system(.largeTitle, design: .serif, weight: .regular)
-    static let sectionTitle = Font.system(.caption2, design: .monospaced, weight: .medium)
-    static let technical = Font.system(.caption, design: .monospaced, weight: .regular)
-    static let technicalStrong = Font.system(.caption, design: .monospaced, weight: .semibold)
+    static let sectionTitle = Font.system(size: 10, weight: .medium, design: .monospaced)
+    static let technical = Font.system(size: 11, weight: .regular, design: .monospaced)
+    static let technicalStrong = Font.system(size: 11, weight: .semibold, design: .monospaced)
     static let metric = Font.system(.title, design: .serif, weight: .regular)
+    static let cardTitle = Font.system(size: 13, weight: .semibold, design: .default)
+    static let metadata = Font.system(size: 11, weight: .regular, design: .default)
+    static let microLabel = Font.system(size: 9, weight: .medium, design: .monospaced)
+    static let microMetric = Font.system(.title3, design: .serif, weight: .regular)
 }
 
 enum BellwireSpacing {
@@ -104,15 +124,15 @@ enum BellwireSpacing {
 enum BellwireRadius {
     static let small: CGFloat = 8
     static let control: CGFloat = 14
-    static let card: CGFloat = 18
+    static let card: CGFloat = 20
     static let largeCard: CGFloat = 24
     static let hero: CGFloat = 32
 }
 
 enum BellwireShadow {
-    static let cardColor = Color.black.opacity(0.08)
-    static let cardRadius: CGFloat = 16
-    static let cardY: CGFloat = 6
+    static var cardColor: Color { BellwireTheme.cardShadow }
+    static let cardRadius: CGFloat = 14
+    static let cardY: CGFloat = 5
 }
 
 enum BellwireAnimation {
@@ -143,23 +163,15 @@ struct PressableButtonStyle: ButtonStyle {
 }
 
 private struct BellwireSurfaceModifier: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
     let radius: CGFloat
     let elevated: Bool
 
     func body(content: Content) -> some View {
         content
             .background(
-                elevated ? BellwireTheme.surface : BellwireTheme.surface,
+                BellwireTheme.surface,
                 in: RoundedRectangle(cornerRadius: radius, style: .continuous)
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(
-                        colorScheme == .dark ? Color.white.opacity(0.055) : Color.black.opacity(0.035),
-                        lineWidth: 1
-                    )
-            }
             .shadow(
                 color: elevated ? BellwireShadow.cardColor : .clear,
                 radius: elevated ? BellwireShadow.cardRadius : 0,

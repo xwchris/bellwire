@@ -102,11 +102,15 @@ struct ProjectsView: View {
                 Menu {
                     Picker("Project filter", selection: $filter) {
                         ForEach(ProjectFilter.allCases) { option in
-                            Text(option.label).tag(option)
+                            Text(LocalizedStringKey(option.label)).tag(option)
                         }
                     }
                 } label: {
-                    Label(filter.label, systemImage: "line.3.horizontal.decrease")
+                    Label {
+                        Text(LocalizedStringKey(filter.label))
+                    } icon: {
+                        Image(systemName: "line.3.horizontal.decrease")
+                    }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(BellwireTheme.accent)
                         .frame(minHeight: 44)
@@ -164,7 +168,7 @@ private struct ProjectListRow: View {
 
     var body: some View {
         HStack(spacing: BellwireSpacing.small) {
-            ProjectAvatarView(name: project.name, icon: project.icon, size: 46)
+            ProjectAvatarView(name: project.name, icon: project.icon, size: 46, logoURL: project.logoUrl.flatMap(URL.init(string:)))
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: BellwireSpacing.compact) {
                     Text(project.name)
@@ -211,20 +215,45 @@ private struct ProjectListRow: View {
 
 struct EventsView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var filter: EventFilter = .all
+    @Binding var filter: EventFilter
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: BellwireSpacing.roomy) {
                     VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
-                        Text("Events")
-                            .font(BellwireTypography.pageTitle)
-                            .foregroundStyle(BellwireTheme.ink)
-                            .accessibilityAddTraits(.isHeader)
+                        HStack(alignment: .firstTextBaseline, spacing: BellwireSpacing.standard) {
+                            Text("Events")
+                                .font(BellwireTypography.pageTitle)
+                                .foregroundStyle(BellwireTheme.ink)
+                                .accessibilityAddTraits(.isHeader)
+                            Spacer()
+                            Button {
+                                Task {
+                                    if await model.markAllRead() > 0 { BellwireHaptics.success() }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if model.isMarkingAllRead {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: "checkmark.circle")
+                                    }
+                                    Text("Mark all read")
+                                }
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(BellwireTheme.accent)
+                                .frame(minHeight: 44)
+                            }
+                            .buttonStyle(PressableButtonStyle())
+                            .disabled(model.unreadCount == 0 || model.isMarkingAllRead)
+                            .opacity(model.unreadCount == 0 ? 0.42 : 1)
+                            .accessibilityHint("Marks every unread event as read")
+                        }
                         Picker("Event filter", selection: $filter) {
                             ForEach(EventFilter.allCases) { option in
-                                Text(option.label).tag(option)
+                                Text(LocalizedStringKey(option.label)).tag(option)
                             }
                         }
                         .pickerStyle(.segmented)
@@ -288,7 +317,7 @@ struct EventsView: View {
     }
 }
 
-private enum EventFilter: String, CaseIterable, Identifiable {
+enum EventFilter: String, CaseIterable, Identifiable {
     case all
     case unread
     case failed
@@ -300,6 +329,11 @@ private enum EventFilter: String, CaseIterable, Identifiable {
 struct InboxView: View {
     @EnvironmentObject private var model: AppModel
     @State private var path: [AppRoute] = []
+    let onOpenEvents: (_ preferUnread: Bool) -> Void
+
+    init(onOpenEvents: @escaping (_ preferUnread: Bool) -> Void = { _ in }) {
+        self.onOpenEvents = onOpenEvents
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -341,7 +375,7 @@ struct InboxView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
                     .bellwireTechnicalLabel()
-                Text(greeting)
+                Text(LocalizedStringKey(greeting))
                     .font(BellwireTypography.pageTitle)
                     .tracking(-0.5)
                     .foregroundStyle(BellwireTheme.ink)
@@ -349,18 +383,32 @@ struct InboxView: View {
             }
             Spacer()
             Button {
-                Task { await model.loadDashboard() }
+                BellwireHaptics.selection()
+                onOpenEvents(model.unreadCount > 0)
             } label: {
                 Image(systemName: BellwireIcons.notification)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(BellwireTheme.accent)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                     .background(BellwireTheme.surface, in: Circle())
                     .overlay(Circle().stroke(BellwireTheme.separator, lineWidth: 1))
+                    .overlay(alignment: .topTrailing) {
+                        if model.unreadCount > 0 {
+                            Circle()
+                                .fill(BellwireTheme.accent)
+                                .frame(width: 9, height: 9)
+                                .overlay {
+                                    Circle().stroke(BellwireTheme.background, lineWidth: 2)
+                                }
+                                .offset(x: -1, y: 1)
+                                .accessibilityHidden(true)
+                        }
+                    }
             }
             .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel("Refresh dashboard")
-            .accessibilityHint("Loads the latest projects, live surfaces, and events")
+            .accessibilityLabel(model.unreadCount > 0 ? "Open unread events" : "Open events")
+            .accessibilityValue(model.unreadCount > 0 ? "\(model.unreadCount) unread" : "No unread events")
+            .accessibilityHint("Opens the Events tab")
         }
     }
 
@@ -377,6 +425,7 @@ struct InboxView: View {
             RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)
                 .fill(BellwireTheme.surface)
                 .overlay(BellwireTheme.amberGlow.clipShape(RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)))
+                .overlay(BellwireTheme.amberGlowLeading.clipShape(RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)))
         }
         .overlay {
             RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)
@@ -455,7 +504,12 @@ struct EventRow: View {
 
     var body: some View {
         HStack(spacing: BellwireSpacing.small) {
-            ProjectAvatarView(name: event.project.name, icon: event.project.icon, size: 36)
+            ProjectAvatarView(
+                name: event.project.name,
+                icon: event.project.icon,
+                size: 36,
+                logoURL: event.project.logoUrl.flatMap(URL.init(string:))
+            )
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     if event.isUnread {

@@ -3,6 +3,10 @@
 Live Surfaces are mutable, agent-defined cards. Use a stable lowercase key so
 later calls update the same card instead of creating duplicates.
 
+For production application code, call the same `PUT` endpoint with the
+project-scoped `BELLWIRE_INGEST_TOKEN`. Reserve `BELLWIRE_AGENT_TOKEN` for the
+management CLI and configuration work.
+
 ```bash
 node <skill-dir>/scripts/bellwire.mjs upsert-surface \
   --project <project-id> \

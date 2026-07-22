@@ -68,9 +68,16 @@ Choose one durability boundary:
    `200 deduplicated`; return a retryable `5xx` when Bellwire is unavailable.
 2. **Queued:** verify and enqueue durably, then return `202`. The queue consumer
    calls Bellwire with the original stable idempotency key.
+3. **Committed source plus repair:** commit the business record first, start the
+   Bellwire call as a bounded side effect, and run a cursor-based reconciliation
+   job that replays committed records with the same stable idempotency key. Use
+   this only when the application database is a sufficient replayable source of
+   truth.
 
 Do not return `2xx` merely because work was started with `waitUntil`; a process
-failure can lose the event while preventing the provider from retrying.
+failure can lose the event while preventing the provider from retrying. A
+`waitUntil` design satisfies option 3 only when the repair job and cursor are
+implemented, tested, deployed, and able to reconstruct the Event.
 
 Return `400` for malformed requests and `401` or `403` for invalid signatures.
 Return `2xx` for verified duplicates and deliberately ignored event types.
@@ -121,5 +128,6 @@ Cover at least:
 - duplicate delivery reuses the same idempotency key;
 - unsupported event type returns success without a Bellwire request;
 - Bellwire failure returns a retryable response or retries through the queue;
+- committed-source recovery replays a missed Event with the same idempotency key;
 - out-of-order revenue events overwrite from an absolute source-of-truth value;
 - logs and error responses contain no secrets or raw customer payloads.

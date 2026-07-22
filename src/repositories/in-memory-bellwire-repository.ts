@@ -61,7 +61,9 @@ export class InMemoryBellwireRepository implements BellwireRepository {
 
   async saveDevice(device: Device): Promise<Device> {
     const existing = [...this.devices.values()].find(
-      (candidate) => candidate.apnsToken === device.apnsToken,
+      (candidate) =>
+        candidate.apnsToken === device.apnsToken ||
+        (candidate.userId === device.userId && candidate.installationId === device.installationId),
     );
     if (existing) {
       const updated = { ...device, id: existing.id, createdAt: existing.createdAt };
@@ -292,6 +294,18 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   async markEventRead(eventId: string, readAt: string): Promise<void> {
     const event = this.events.get(eventId);
     if (event) this.events.set(eventId, { ...event, readAt });
+  }
+
+  async markAllEventsRead(projectIds: string[], readAt: string): Promise<number> {
+    const ownedProjects = new Set(projectIds);
+    let updatedCount = 0;
+    for (const [eventId, event] of this.events) {
+      if (ownedProjects.has(event.projectId) && !event.readAt) {
+        this.events.set(eventId, { ...event, readAt });
+        updatedCount += 1;
+      }
+    }
+    return updatedCount;
   }
 
   async createDeliveryIfAbsent(delivery: Delivery): Promise<CreateDeliveryResult> {

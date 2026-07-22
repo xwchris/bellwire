@@ -27,16 +27,20 @@ struct RootView: View {
 struct MainTabView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selection: MainTab = .home
+    @State private var eventsFilter: EventFilter = .all
 
     var body: some View {
         TabView(selection: $selection) {
-            InboxView()
+            InboxView { preferUnread in
+                eventsFilter = preferUnread ? .unread : .all
+                selection = .events
+            }
                 .tag(MainTab.home)
                 .tabItem { Label("Home", systemImage: BellwireIcons.home) }
             ProjectsView()
                 .tag(MainTab.projects)
                 .tabItem { Label("Projects", systemImage: BellwireIcons.projects) }
-            EventsView()
+            EventsView(filter: $eventsFilter)
                 .tag(MainTab.events)
                 .tabItem { Label("Events", systemImage: BellwireIcons.events) }
                 .badge(model.unreadCount)

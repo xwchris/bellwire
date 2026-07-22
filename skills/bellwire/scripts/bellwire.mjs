@@ -37,14 +37,33 @@ async function run(selectedCommand, args) {
     case "list-projects":
       return apiRequest("/v1/projects");
     case "create-project":
+      if (args["logo-url"]) validateLogoUrl(args["logo-url"]);
       return apiRequest("/v1/projects", {
         method: "POST",
         body: {
           name: required(args, "name"),
           ...(args.icon ? { icon: args.icon } : {}),
+          ...(args["logo-url"] ? { logoUrl: args["logo-url"] } : {}),
           ...(args.category ? { category: args.category } : {}),
         },
       });
+    case "update-project": {
+      const projectId = required(args, "project");
+      if (args["logo-url"] && args["clear-logo"]) {
+        throw new Error("Use either --logo-url or --clear-logo, not both");
+      }
+      if (args["logo-url"]) validateLogoUrl(args["logo-url"]);
+      const body = {
+        ...(args.name ? { name: args.name } : {}),
+        ...(args.icon ? { icon: args.icon } : {}),
+        ...(args.category ? { category: args.category } : {}),
+        ...(args.status ? { status: args.status } : {}),
+        ...(args["logo-url"] ? { logoUrl: args["logo-url"] } : {}),
+        ...(args["clear-logo"] ? { logoUrl: null } : {}),
+      };
+      if (Object.keys(body).length === 0) throw new Error("Provide at least one project field to update");
+      return apiRequest(`/v1/projects/${encodeURIComponent(projectId)}`, { method: "PATCH", body });
+    }
     case "validate-spec": {
       const spec = await readJsonFile(required(args, "file"));
       validateSpec(spec);
@@ -146,7 +165,7 @@ function parseArguments(argv) {
     }
     if (!item.startsWith("--")) throw new Error(`Unexpected argument: ${item}`);
     const key = item.slice(2);
-    if (key === "json" || key === "help") {
+    if (key === "json" || key === "help" || key === "clear-logo") {
       parsed[key] = true;
       continue;
     }
@@ -334,6 +353,17 @@ function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function validateLogoUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || !url.hostname || value.length > 2048) {
+      throw new Error("invalid");
+    }
+  } catch {
+    throw new Error("--logo-url must be a public HTTPS URL up to 2048 characters");
+  }
+}
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -347,5 +377,5 @@ function printResult(value, json) {
 }
 
 function printHelp() {
-  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--icon <sf-symbol>] [--category <name>]\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  delete-surface --project <id> --key <stable-key>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
+  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]\n  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  delete-surface --project <id> --key <stable-key>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
 }

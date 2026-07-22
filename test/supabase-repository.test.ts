@@ -11,11 +11,38 @@ import type {
 import { SupabaseBellwireRepository } from "../src/repositories/supabase-bellwire-repository";
 
 describe("SupabaseBellwireRepository", () => {
+  it("marks unread events across owned projects in one filtered update", async () => {
+    let request: Request | undefined;
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        request = new Request(input, init);
+        return Response.json([{ id: "event-1" }, { id: "event-2" }]);
+      },
+    );
+
+    const updated = await repository.markAllEventsRead(
+      ["project-1", "project-2"],
+      "2026-07-21T14:00:00.000Z",
+    );
+
+    expect(updated).toBe(2);
+    expect(request?.method).toBe("PATCH");
+    const url = new URL(request?.url ?? "https://invalid.example");
+    expect(url.searchParams.get("project_id")).toBe("in.(project-1,project-2)");
+    expect(url.searchParams.get("read_at")).toBe("is.null");
+    expect(url.searchParams.get("select")).toBe("id");
+    expect(request?.headers.get("prefer")).toBe("return=representation");
+    expect(await request?.json()).toEqual({ read_at: "2026-07-21T14:00:00.000Z" });
+  });
+
   it("lets Postgres preserve a device primary key when an APNs token is re-registered", async () => {
     let request: Request | undefined;
     const storedRow = {
       id: "stored-device-id",
       user_id: "user-1",
+      installation_id: "11111111-1111-4111-8111-111111111111",
       name: "Updated iPhone",
       platform: "ios",
       apns_token: "a".repeat(64),
@@ -36,6 +63,7 @@ describe("SupabaseBellwireRepository", () => {
     const input: Device = {
       id: "new-random-id",
       userId: "user-1",
+      installationId: "11111111-1111-4111-8111-111111111111",
       name: "Updated iPhone",
       platform: "ios",
       apnsToken: "a".repeat(64),
@@ -48,11 +76,15 @@ describe("SupabaseBellwireRepository", () => {
     const saved = await repository.saveDevice(input);
     const body = await request?.json();
 
-    expect(body).not.toHaveProperty("id");
-    expect(body).not.toHaveProperty("created_at");
-    expect(body).toMatchObject({ apns_token: input.apnsToken, name: input.name });
+    expect(body).toMatchObject({
+      p_id: input.id,
+      p_user_id: input.userId,
+      p_installation_id: input.installationId,
+      p_apns_token: input.apnsToken,
+      p_name: input.name,
+    });
     expect(saved).toMatchObject({ id: "stored-device-id", createdAt: storedRow.created_at });
-    expect(request?.url).toContain("on_conflict=apns_token");
+    expect(request?.url).toContain("/rpc/register_device");
   });
 
   it("saves a live Surface through the atomic version RPC", async () => {

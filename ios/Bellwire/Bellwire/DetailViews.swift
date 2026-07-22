@@ -63,7 +63,12 @@ struct EventDetailView: View {
                 .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: BellwireSpacing.compact) {
-                ProjectAvatarView(name: event.project.name, icon: event.project.icon, size: 24)
+                ProjectAvatarView(
+                    name: event.project.name,
+                    icon: event.project.icon,
+                    size: 24,
+                    logoURL: event.project.logoUrl.flatMap(URL.init(string:))
+                )
                 Text(event.project.name)
                     .lineLimit(1)
                 if let date = event.occurredDate {
@@ -259,7 +264,12 @@ struct ProjectDetailView: View {
 
     private func projectHeader(_ project: ProjectOverview) -> some View {
         HStack(spacing: BellwireSpacing.standard) {
-            ProjectAvatarView(name: project.name, icon: project.icon, size: 64)
+            ProjectAvatarView(
+                name: project.name,
+                icon: project.icon,
+                size: 64,
+                logoURL: project.logoUrl.flatMap(URL.init(string:))
+            )
             VStack(alignment: .leading, spacing: 7) {
                 Text(project.name)
                     .font(.system(.title, design: .serif, weight: .regular))

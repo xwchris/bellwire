@@ -22,7 +22,35 @@
 		B0000000000000000000000E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000E /* SettingsView.swift */; };
 		B0000000000000000000000F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000012 /* Assets.xcassets */; };
 		B00000000000000000000010 /* SurfaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000013 /* SurfaceViews.swift */; };
+		B00000000000000000000011 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000014 /* NotificationService.swift */; };
+		B00000000000000000000012 /* BellwireNotificationService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* BellwireNotificationService.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B00000000000000000000013 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* Localization.swift */; };
+		B00000000000000000000014 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001A /* Localizable.strings */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		H00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A30000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000002;
+			remoteInfo = BellwireNotificationService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A40000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B00000000000000000000012 /* BellwireNotificationService.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		F00000000000000000000001 /* BellwireApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BellwireApp.swift; sourceTree = "<group>"; };
@@ -44,10 +72,22 @@
 		F00000000000000000000011 /* Bellwire.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bellwire.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000013 /* SurfaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceViews.swift; sourceTree = "<group>"; };
+		F00000000000000000000014 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		F00000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000016 /* BellwireNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BellwireNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000017 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
+		F00000000000000000000018 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		F00000000000000000000019 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		D00000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D00000000000000000000002 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = ();
@@ -60,6 +100,7 @@
 			isa = PBXGroup;
 			children = (
 				E00000000000000000000002 /* Bellwire */,
+				E00000000000000000000004 /* BellwireNotificationService */,
 				E00000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -68,6 +109,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000001 /* BellwireApp.swift */,
+				F00000000000000000000017 /* Localization.swift */,
 				F00000000000000000000002 /* AppConfig.swift */,
 				F00000000000000000000003 /* Models.swift */,
 				F00000000000000000000004 /* KeychainStore.swift */,
@@ -83,6 +125,7 @@
 				F0000000000000000000000D /* DetailViews.swift */,
 				F0000000000000000000000E /* SettingsView.swift */,
 				F00000000000000000000012 /* Assets.xcassets */,
+				F0000000000000000000001A /* Localizable.strings */,
 				F0000000000000000000000F /* Info.plist */,
 				F00000000000000000000010 /* Bellwire.entitlements */,
 			);
@@ -91,8 +134,20 @@
 		};
 		E00000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
-			children = (F00000000000000000000011 /* Bellwire.app */);
+			children = (
+				F00000000000000000000011 /* Bellwire.app */,
+				F00000000000000000000016 /* BellwireNotificationService.appex */,
+			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000004 /* BellwireNotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000014 /* NotificationService.swift */,
+				F00000000000000000000015 /* Info.plist */,
+			);
+			path = BellwireNotificationService;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -105,13 +160,31 @@
 				A10000000000000000000001 /* Sources */,
 				D00000000000000000000001 /* Frameworks */,
 				A20000000000000000000001 /* Resources */,
+				A40000000000000000000001 /* Embed App Extensions */,
 			);
 			buildRules = ();
-			dependencies = ();
+			dependencies = (
+				G00000000000000000000001 /* PBXTargetDependency */,
+			);
 			name = Bellwire;
 			productName = Bellwire;
 			productReference = F00000000000000000000011 /* Bellwire.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A00000000000000000000002 /* BellwireNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000000000000000000003 /* Build configuration list for PBXNativeTarget "BellwireNotificationService" */;
+			buildPhases = (
+				A10000000000000000000002 /* Sources */,
+				D00000000000000000000002 /* Frameworks */,
+				A20000000000000000000002 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = BellwireNotificationService;
+			productName = BellwireNotificationService;
+			productReference = F00000000000000000000016 /* BellwireNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -124,26 +197,51 @@
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					A00000000000000000000001 = { CreatedOnToolsVersion = 26.0; };
+					A00000000000000000000002 = { CreatedOnToolsVersion = 26.0; };
 				};
 			};
 			buildConfigurationList = C00000000000000000000001 /* Build configuration list for PBXProject "Bellwire" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (en, Base);
+			knownRegions = (en, "zh-Hans", Base);
 			mainGroup = E00000000000000000000001;
 			productRefGroup = E00000000000000000000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (A00000000000000000000001 /* Bellwire */);
+			targets = (
+				A00000000000000000000001 /* Bellwire */,
+				A00000000000000000000002 /* BellwireNotificationService */,
+			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXVariantGroup section */
+		F0000000000000000000001A /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				F00000000000000000000018 /* en */,
+				F00000000000000000000019 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A20000000000000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (B0000000000000000000000F /* Assets.xcassets in Resources */);
+			files = (
+				B0000000000000000000000F /* Assets.xcassets in Resources */,
+				B00000000000000000000014 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
@@ -154,6 +252,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B00000000000000000000001 /* BellwireApp.swift in Sources */,
+				B00000000000000000000013 /* Localization.swift in Sources */,
 				B00000000000000000000002 /* AppConfig.swift in Sources */,
 				B00000000000000000000003 /* Models.swift in Sources */,
 				B00000000000000000000004 /* KeychainStore.swift in Sources */,
@@ -171,7 +270,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000011 /* NotificationService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		G00000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000002 /* BellwireNotificationService */;
+			targetProxy = H00000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		C10000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
@@ -247,6 +362,42 @@
 			SWIFT_VERSION = 5.0;
 			TARGETED_DEVICE_FAMILY = 1;
 		}; name = Release; };
+		C30000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 1;
+			DEVELOPMENT_TEAM = 98JU6VDJZU;
+			GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = BellwireNotificationService/Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+			MARKETING_VERSION = 0.1.0;
+			PRODUCT_BUNDLE_IDENTIFIER = app.bellwire.NotificationService;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SKIP_INSTALL = YES;
+			SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+			SWIFT_EMIT_LOC_STRINGS = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = 1;
+		}; name = Debug; };
+		C30000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 1;
+			DEVELOPMENT_TEAM = 98JU6VDJZU;
+			GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = BellwireNotificationService/Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+			MARKETING_VERSION = 0.1.0;
+			PRODUCT_BUNDLE_IDENTIFIER = app.bellwire.NotificationService;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SKIP_INSTALL = YES;
+			SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+			SWIFT_EMIT_LOC_STRINGS = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = 1;
+		}; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -259,6 +410,12 @@
 		C00000000000000000000002 /* Build configuration list for PBXNativeTarget "Bellwire" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (C20000000000000000000001 /* Debug */, C20000000000000000000002 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00000000000000000000003 /* Build configuration list for PBXNativeTarget "BellwireNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (C30000000000000000000001 /* Debug */, C30000000000000000000002 /* Release */);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};

@@ -20,6 +20,7 @@ const project: Project = {
   name: "Bellwire Store",
   slug: "bellwire-store",
   icon: "bolt.horizontal",
+  logoUrl: "https://cdn.example.com/bellwire.png",
   category: "commerce",
   status: "active",
   endpoint: "/v1/events/project-1",
@@ -70,6 +71,7 @@ const event: BellwireEvent = {
 const device: Device = {
   id: "device-1",
   userId: project.userId,
+  installationId: "11111111-1111-4111-8111-111111111111",
   name: "iPhone",
   platform: "ios",
   apnsToken: "a".repeat(64),
@@ -133,6 +135,7 @@ describe("notification delivery", () => {
 
     expect(notification.title).toBe("Payment Success");
     expect(notification.body).toBe("1,234.5 complete");
+    expect(notification.logoUrl).toBe(project.logoUrl);
     expect(JSON.stringify(notification)).not.toContain("never render this");
   });
 
@@ -434,6 +437,7 @@ describe("APNs client", () => {
       priority: "high",
       eventId: "event-123",
       projectId: "project-123",
+      logoUrl: "https://cdn.example.com/project.png",
     });
 
     expect(result).toEqual({ providerMessageId: "provider-123" });
@@ -442,8 +446,13 @@ describe("APNs client", () => {
     expect(captured?.headers.get("apns-topic")).toBe("app.bellwire");
     expect(captured?.headers.get("apns-priority")).toBe("10");
     expect(await captured?.json()).toMatchObject({
-      aps: { alert: { title: "Payment received", body: "CNY 28" }, "thread-id": "payments" },
+      aps: {
+        alert: { title: "Payment received", body: "CNY 28" },
+        "thread-id": "payments",
+        "mutable-content": 1,
+      },
       deepLink: "bellwire://events/event-123",
+      projectLogoUrl: "https://cdn.example.com/project.png",
     });
   });
 });

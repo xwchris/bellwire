@@ -40,6 +40,7 @@ export interface Project {
   name: string;
   slug: string;
   icon: string;
+  logoUrl?: string;
   category: string;
   status: "active" | "paused";
   endpoint: string;
@@ -50,6 +51,7 @@ export interface Project {
 export interface Device {
   id: string;
   userId: string;
+  installationId: string;
   name: string;
   platform: "ios";
   apnsToken: string;

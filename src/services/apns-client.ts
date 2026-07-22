@@ -17,6 +17,7 @@ export interface ApnsNotification {
   priority: "normal" | "high";
   eventId: string;
   projectId: string;
+  logoUrl?: string;
 }
 
 export interface ApnsResult {
@@ -66,10 +67,12 @@ export class ApnsClient {
           },
           sound: notification.sound,
           "thread-id": notification.threadId,
+          ...(notification.logoUrl ? { "mutable-content": 1 } : {}),
         },
         eventId: notification.eventId,
         projectId: notification.projectId,
         deepLink: `bellwire://events/${notification.eventId}`,
+        ...(notification.logoUrl ? { projectLogoUrl: notification.logoUrl } : {}),
       }),
     });
     if (!response.ok) {

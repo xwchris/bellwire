@@ -2,7 +2,7 @@
 
 Default base URL: `https://api.bellwire.app`
 
-Management routes require `Authorization: Bearer $BELLWIRE_AGENT_TOKEN`. Event ingestion uses a separate `bw_live_...` token.
+Management routes require `Authorization: Bearer $BELLWIRE_AGENT_TOKEN`. Runtime event ingestion and live Surface updates use the narrower, project-scoped `bw_live_...` token.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -10,15 +10,17 @@ Management routes require `Authorization: Bearer $BELLWIRE_AGENT_TOKEN`. Event i
 | `POST` | `/v1/projects` | Create a project |
 | `GET` | `/v1/projects` | List projects |
 | `GET` | `/v1/projects/{id}` | Read schema, Surface, and delivery health |
+| `PATCH` | `/v1/projects/{id}` | Update project identity, status, or Logo URL |
 | `POST` | `/v1/projects/{id}/event-schemas` | Create the next schema version |
 | `POST` | `/v1/projects/{id}/notification-surfaces` | Create the next notification Surface version |
 | `GET` | `/v1/surfaces` | List current live Surfaces across owned projects |
 | `GET` | `/v1/projects/{id}/surfaces` | List current live Surfaces for one project |
-| `PUT` | `/v1/projects/{id}/surfaces/{key}` | Create or replace a live Surface by stable key |
+| `PUT` | `/v1/projects/{id}/surfaces/{key}` | Create or replace a live Surface by stable key; accepts the owning Agent token or that project's Ingest Token |
 | `DELETE` | `/v1/projects/{id}/surfaces/{key}` | End and remove a live Surface |
 | `POST` | `/v1/projects/{id}/ingest-tokens` | Create a one-time-visible Ingest Token |
 | `DELETE` | `/v1/projects/{id}/ingest-tokens/{tokenId}` | Revoke an Ingest Token |
 | `POST` | `/v1/projects/{id}/events/test` | Validate, store, and dispatch a test event |
+| `POST` | `/v1/inbox/read-all` | Mark every unread event owned by the caller as read |
 | `GET` | `/v1/events/{eventId}` | Read event and delivery detail |
 | `GET` | `/v1/projects/{id}/delivery-health` | Read project delivery counts |
 
@@ -40,4 +42,19 @@ Status semantics:
 - `429`: per-token ingest quota exceeded.
 
 Live Surface writes are idempotent by `(projectId, surfaceKey)`. Reusing the
-same key updates the existing Surface and increments `version`.
+same key updates the existing Surface and increments `version` only when the
+rendered payload changes.
+
+Application runtimes should write live Surfaces with their project-scoped
+`BELLWIRE_INGEST_TOKEN`, not a management Agent token:
+
+```http
+PUT /v1/projects/{projectId}/surfaces/revenue-today
+Authorization: Bearer bw_live_...
+Content-Type: application/json
+```
+
+Projects accept an optional `logoUrl` on create or update. It must be a public
+HTTPS URL up to 2048 characters. Send `{"logoUrl": null}` to remove it. The
+iOS app uses it for project avatars, and APNs marks notifications as mutable so
+the Notification Service Extension can add the image as a rich attachment.

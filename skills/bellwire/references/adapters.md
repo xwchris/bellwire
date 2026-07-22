@@ -42,7 +42,7 @@ Call this after the business transaction succeeds. If notification is best-effor
 
 ## Cloudflare Worker
 
-Add `BELLWIRE_INGEST_TOKEN` with `wrangler secret put`, expose it in the environment type, and schedule notification work without delaying the response when that matches the existing reliability model:
+Add `BELLWIRE_INGEST_TOKEN` with `wrangler secret put` and expose it in the environment type. Use `waitUntil` only when the committed source record can be replayed by a queue, outbox, or scheduled reconciliation job:
 
 ```ts
 ctx.waitUntil(
@@ -53,6 +53,11 @@ ctx.waitUntil(
   }),
 );
 ```
+
+`waitUntil` extends execution time but is not a durable handoff. If there is no
+replay path, await Bellwire before returning or add durable storage first. For
+provider callbacks, follow [webhooks.md](webhooks.md); do not copy this snippet
+into a webhook and return `2xx` without a durability boundary.
 
 Do not put the token in `[vars]` in `wrangler.toml`.
 

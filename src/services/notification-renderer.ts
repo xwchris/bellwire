@@ -12,6 +12,7 @@ export interface RenderedNotification {
   sound: string;
   threadId: string;
   priority: "normal" | "high";
+  logoUrl?: string;
 }
 
 export function renderNotification(
@@ -34,6 +35,7 @@ export function renderNotification(
     sound: surface.sound,
     threadId: surface.group,
     priority: surface.priority,
+    ...(project.logoUrl ? { logoUrl: project.logoUrl } : {}),
   };
 }
 

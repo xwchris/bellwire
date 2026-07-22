@@ -6,10 +6,28 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["dist/**", "coverage/**"],
+    ignores: [
+      "dist/**",
+      "coverage/**",
+      "website/dist/**",
+      "website/node_modules/**",
+      "website/*.tsbuildinfo",
+    ],
   },
   {
     files: ["**/*.mjs"],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
+    files: ["website/src/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: globals.browser,
+    },
+  },
+  {
+    files: ["website/vite.config.ts"],
     languageOptions: {
       globals: globals.node,
     },

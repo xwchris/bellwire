@@ -101,6 +101,7 @@ describe("Bellwire MVP API", () => {
     await repository.saveDevice({
       id: crypto.randomUUID(),
       userId: userPrincipal.userId,
+      installationId: "11111111-1111-4111-8111-111111111111",
       name: "Test iPhone",
       platform: "ios",
       apnsToken: "a".repeat(64),
@@ -136,6 +137,72 @@ describe("Bellwire MVP API", () => {
     expect(storedTokens[0]).not.toHaveProperty("token");
   });
 
+  it("stores a public HTTPS project logo and allows clearing it", async () => {
+    const create = await app.request("/v1/projects", {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ name: "Logo project", logoUrl: "https://cdn.example.com/logo.png" }),
+    });
+    expect(create.status).toBe(201);
+    const project = await create.json<{ id: string; logoUrl?: string }>();
+    expect(project.logoUrl).toBe("https://cdn.example.com/logo.png");
+
+    const clear = await app.request(`/v1/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ logoUrl: null }),
+    });
+    expect(clear.status).toBe(200);
+    expect(await clear.json()).not.toHaveProperty("logoUrl");
+
+    const invalid = await app.request(`/v1/projects/${project.id}`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ logoUrl: "http://example.com/logo.png" }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
+  it("requires a stable installation ID and rotates APNs tokens without duplicating a device", async () => {
+    const headers = { authorization: "Bearer test", "content-type": "application/json" };
+    const installationId = "11111111-1111-4111-8111-111111111111";
+    const withoutInstallation = await app.request("/v1/devices", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "iPhone", apnsToken: "a".repeat(64), appVersion: "0.1.0" }),
+    });
+    expect(withoutInstallation.status).toBe(400);
+
+    const first = await app.request("/v1/devices", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "iPhone",
+        apnsToken: "a".repeat(64),
+        appVersion: "0.1.0",
+        installationId,
+      }),
+    });
+    expect(first.status).toBe(201);
+    const firstDevice = await first.json<{ id: string }>();
+
+    const rotated = await app.request("/v1/devices", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "iPhone",
+        apnsToken: "b".repeat(64),
+        appVersion: "0.1.1",
+        installationId,
+      }),
+    });
+    expect(rotated.status).toBe(201);
+    const rotatedDevice = await rotated.json<{ id: string; apnsToken: string }>();
+    expect(rotatedDevice.id).toBe(firstDevice.id);
+    expect(rotatedDevice.apnsToken).toBe("b".repeat(64));
+    expect(await repository.listDevices(userPrincipal.userId)).toHaveLength(1);
+  });
+
   it("upserts a typed live Surface by stable key and exposes only the latest state", async () => {
     const projectId = await createProject();
     const endpoint = `/v1/projects/${projectId}/surfaces/sales-today`;
@@ -154,12 +221,30 @@ describe("Bellwire MVP API", () => {
       }),
     });
     expect(first.status).toBe(200);
-    expect(await first.json()).toMatchObject({
+    const firstSurface = await first.json<{ id: string; [key: string]: unknown }>();
+    expect(firstSurface).toMatchObject({
       surfaceKey: "sales-today",
       type: "stats",
       version: 1,
       content: { metrics: [{ label: "Revenue", value: "¥2,430" }, { label: "Orders", value: 37 }] },
     });
+
+    const unchanged = await app.request(endpoint, {
+      method: "PUT",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "stats",
+        title: "Sales",
+        subtitle: "Today",
+        metrics: [
+          { label: "Revenue", value: "¥2,430", color: "green" },
+          { label: "Orders", value: 37, color: "blue" },
+        ],
+        action: { type: "open_url", title: "Open dashboard", url: "https://example.com/sales" },
+      }),
+    });
+    expect(unchanged.status).toBe(200);
+    expect(await unchanged.json()).toMatchObject({ id: firstSurface.id, version: 1 });
 
     const updated = await app.request(endpoint, {
       method: "PUT",
@@ -203,6 +288,37 @@ describe("Bellwire MVP API", () => {
     });
     expect(removed.status).toBe(204);
     expect((await repository.listLiveSurfaces(projectId))).toEqual([]);
+  });
+
+  it("lets a project-scoped Ingest Token update only that project's live Surfaces", async () => {
+    const projectId = await createProject();
+    const token = await configureProject(projectId);
+    const endpoint = `/v1/projects/${projectId}/surfaces/revenue-today`;
+    const response = await app.request(endpoint, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "stats",
+        title: "Today",
+        metrics: [{ label: "Revenue", value: "¥86.00", color: "orange" }],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      projectId,
+      surfaceKey: "revenue-today",
+      version: 1,
+      content: { metrics: [{ label: "Revenue", value: "¥86.00" }] },
+    });
+
+    const otherProjectId = await createProject();
+    const crossProject = await app.request(`/v1/projects/${otherProjectId}/surfaces/revenue-today`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ type: "stats", title: "Today", metrics: [{ label: "Orders", value: 1 }] }),
+    });
+    expect(crossProject.status).toBe(401);
+    expect((await repository.listLiveSurfaces(otherProjectId))).toEqual([]);
   });
 
   it("creates a one-time pairing code and exchanges it for an authenticated Agent token", async () => {
@@ -368,6 +484,42 @@ describe("Bellwire MVP API", () => {
       sensitiveFields: ["customer"],
       project: { name: "VideoSays" },
     });
+  });
+
+  it("marks every unread event in the authenticated inbox as read in one request", async () => {
+    const projectId = await createProject();
+    const token = await configureProject(projectId);
+    for (const key of ["read-all-1", "read-all-2"]) {
+      const response = await app.request(`/v1/events/${projectId}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": key,
+        },
+        body: JSON.stringify(validEvent),
+      });
+      expect(response.status).toBe(201);
+    }
+
+    const markAll = await app.request("/v1/inbox/read-all", {
+      method: "POST",
+      headers: { authorization: "Bearer test" },
+    });
+    expect(markAll.status).toBe(200);
+    const result = await markAll.json<{ readAt: string; updatedCount: number }>();
+    expect(result.updatedCount).toBe(2);
+    expect(result.readAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+
+    const page = await repository.listEvents(projectId, { limit: 10 });
+    expect(page.events).toHaveLength(2);
+    expect(page.events.every((event) => event.readAt === result.readAt)).toBe(true);
+
+    const repeated = await app.request("/v1/inbox/read-all", {
+      method: "POST",
+      headers: { authorization: "Bearer test" },
+    });
+    expect(await repeated.json()).toMatchObject({ updatedCount: 0 });
   });
 
   it("keeps the event's sensitive-field snapshot after a later schema relaxes classification", async () => {
