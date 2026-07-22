@@ -5,3 +5,10 @@
 "Follow system" = "Follow system";
 "English" = "English";
 "Simplified Chinese" = "Simplified Chinese";
+"Danger zone" = "Danger zone";
+"Delete project" = "Delete project";
+"Delete project?" = "Delete project?";
+"Deleting project…" = "Deleting project…";
+"Delete this project and all of its associated data permanently." = "Delete this project and all of its associated data permanently.";
+"This permanently deletes the project, its events, notification configuration, tokens, and live surfaces. This action cannot be undone." = "This permanently deletes the project, its events, notification configuration, tokens, and live surfaces. This action cannot be undone.";
+"Permanently deletes this project and all associated data" = "Permanently deletes this project and all associated data";

@@ -59,6 +59,40 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     return copy(project);
   }
 
+  async deleteProject(projectId: string): Promise<void> {
+    this.projects.delete(projectId);
+
+    for (const key of this.eventSchemas.keys()) {
+      if (key.startsWith(`${projectId}:`)) this.eventSchemas.delete(key);
+    }
+    for (const key of this.surfaces.keys()) {
+      if (key.startsWith(`${projectId}:`)) this.surfaces.delete(key);
+    }
+    for (const [key, surface] of this.liveSurfaces) {
+      if (surface.projectId === projectId) this.liveSurfaces.delete(key);
+    }
+    for (const [tokenId, token] of this.ingestTokens) {
+      if (token.projectId === projectId) this.ingestTokens.delete(tokenId);
+    }
+
+    const deletedEventIds = new Set<string>();
+    for (const [eventId, event] of this.events) {
+      if (event.projectId === projectId) {
+        deletedEventIds.add(eventId);
+        this.events.delete(eventId);
+      }
+    }
+    for (const [key, eventId] of this.eventsByIdempotencyKey) {
+      if (deletedEventIds.has(eventId)) this.eventsByIdempotencyKey.delete(key);
+    }
+    for (const [deliveryId, delivery] of this.deliveries) {
+      if (deletedEventIds.has(delivery.eventId)) this.deliveries.delete(deliveryId);
+    }
+    for (const [key, deliveryId] of this.deliveryByEventDevice) {
+      if (!this.deliveries.has(deliveryId)) this.deliveryByEventDevice.delete(key);
+    }
+  }
+
   async saveDevice(device: Device): Promise<Device> {
     const existing = [...this.devices.values()].find(
       (candidate) =>

@@ -163,6 +163,60 @@ describe("Bellwire MVP API", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("deletes an owned project and all of its project-scoped data", async () => {
+    const projectId = await createProject();
+    const token = await configureProject(projectId);
+    const surfaceResponse = await app.request(`/v1/projects/${projectId}/surfaces/revenue-today`, {
+      method: "PUT",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "stats",
+        title: "Revenue today",
+        metrics: [{ label: "Revenue", value: "¥28" }],
+      }),
+    });
+    expect(surfaceResponse.status).toBe(200);
+    const eventResponse = await app.request(`/v1/events/${projectId}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "idempotency-key": "project-delete-event",
+      },
+      body: JSON.stringify(validEvent),
+    });
+    expect(eventResponse.status).toBe(201);
+
+    const response = await app.request(`/v1/projects/${projectId}`, {
+      method: "DELETE",
+      headers: { authorization: "Bearer test" },
+    });
+
+    expect(response.status).toBe(204);
+    expect(await repository.getProject(projectId)).toBeUndefined();
+    expect(await repository.listEventSchemas(projectId)).toEqual([]);
+    expect(await repository.listNotificationSurfaces(projectId)).toEqual([]);
+    expect(await repository.listLiveSurfaces(projectId)).toEqual([]);
+    expect(await repository.listIngestTokens(projectId)).toEqual([]);
+    expect((await repository.listEvents(projectId, { limit: 100 })).events).toEqual([]);
+  });
+
+  it("does not let one user delete another user's project", async () => {
+    const projectId = await createProject();
+    const otherApp = createApp({
+      service: new BellwireService(repository),
+      authenticator: new StaticAuthenticator({ ...userPrincipal, userId: "user-two" }),
+    });
+
+    const response = await otherApp.request(`/v1/projects/${projectId}`, {
+      method: "DELETE",
+      headers: { authorization: "Bearer test" },
+    });
+
+    expect(response.status).toBe(404);
+    expect(await repository.getProject(projectId)).toBeDefined();
+  });
+
   it("requires a stable installation ID and rotates APNs tokens without duplicating a device", async () => {
     const headers = { authorization: "Bearer test", "content-type": "application/json" };
     const installationId = "11111111-1111-4111-8111-111111111111";

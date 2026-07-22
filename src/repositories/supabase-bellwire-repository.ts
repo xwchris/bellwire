@@ -71,6 +71,10 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     return toProject(requiredFirst(rows));
   }
 
+  async deleteProject(projectId: string): Promise<void> {
+    await this.request(`/projects?${params({ id: `eq.${projectId}` })}`, { method: "DELETE" });
+  }
+
   async saveDevice(device: Device): Promise<Device> {
     const rows = await this.request<JsonRecord[]>("/rpc/register_device", {
       method: "POST",

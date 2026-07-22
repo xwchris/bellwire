@@ -140,6 +140,11 @@ export class BellwireService {
     });
   }
 
+  async deleteProject(principal: Principal, projectId: string): Promise<void> {
+    await this.requireOwnedProject(principal, projectId);
+    await this.repository.deleteProject(projectId);
+  }
+
   async registerDevice(principal: Principal, input: unknown) {
     const body = asRecord(input);
     const apnsToken = readNonEmptyString(body.apnsToken);

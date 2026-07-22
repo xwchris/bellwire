@@ -29,6 +29,7 @@ export interface BellwireRepository {
   getProject(projectId: string): Promise<Project | undefined>;
   listProjects(userId: string): Promise<Project[]>;
   updateProject(project: Project): Promise<Project>;
+  deleteProject(projectId: string): Promise<void>;
 
   saveDevice(device: Device): Promise<Device>;
   getDevice(deviceId: string): Promise<Device | undefined>;

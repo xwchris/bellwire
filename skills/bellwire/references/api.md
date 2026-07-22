@@ -11,6 +11,7 @@ Management routes require `Authorization: Bearer $BELLWIRE_AGENT_TOKEN`. Runtime
 | `GET` | `/v1/projects` | List projects |
 | `GET` | `/v1/projects/{id}` | Read schema, Surface, and delivery health |
 | `PATCH` | `/v1/projects/{id}` | Update project identity, status, or Logo URL |
+| `DELETE` | `/v1/projects/{id}` | Permanently delete an owned project and its project-scoped data |
 | `POST` | `/v1/projects/{id}/event-schemas` | Create the next schema version |
 | `POST` | `/v1/projects/{id}/notification-surfaces` | Create the next notification Surface version |
 | `GET` | `/v1/surfaces` | List current live Surfaces across owned projects |

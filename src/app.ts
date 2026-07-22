@@ -82,6 +82,12 @@ export function createApp(dependencies: {
     );
   });
 
+  app.delete("/v1/projects/:projectId", async (context) => {
+    const principal = await scopedPrincipal(context, dependencies.authenticator, "project:write");
+    await dependencies.service.deleteProject(principal, context.req.param("projectId"));
+    return context.body(null, 204);
+  });
+
   app.post("/v1/projects/:projectId/event-schemas", async (context) => {
     const principal = await scopedPrincipal(context, dependencies.authenticator, "config:write");
     const schema = await dependencies.service.createEventSchema(

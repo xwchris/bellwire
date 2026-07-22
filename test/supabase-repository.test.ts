@@ -11,6 +11,23 @@ import type {
 import { SupabaseBellwireRepository } from "../src/repositories/supabase-bellwire-repository";
 
 describe("SupabaseBellwireRepository", () => {
+  it("deletes a project through its exact primary-key filter", async () => {
+    let request: Request | undefined;
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        request = new Request(input, init);
+        return new Response(null, { status: 204 });
+      },
+    );
+
+    await repository.deleteProject("project-1");
+
+    expect(request?.method).toBe("DELETE");
+    expect(request?.url).toBe("https://example.supabase.co/rest/v1/projects?id=eq.project-1");
+  });
+
   it("marks unread events across owned projects in one filtered update", async () => {
     let request: Request | undefined;
     const repository = new SupabaseBellwireRepository(

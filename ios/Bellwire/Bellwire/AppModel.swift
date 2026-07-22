@@ -156,6 +156,13 @@ final class AppModel: ObservableObject {
         return updated
     }
 
+    func deleteProject(id: String) async throws {
+        try await api.requestVoid("v1/projects/\(id)", method: .delete)
+        projects.removeAll { $0.id == id }
+        liveSurfaces.removeAll { $0.projectId == id }
+        events.removeAll { $0.projectId == id }
+    }
+
     func markRead(id: String) async {
         guard let index = events.firstIndex(where: { $0.id == id }), events[index].isUnread else { return }
         do {

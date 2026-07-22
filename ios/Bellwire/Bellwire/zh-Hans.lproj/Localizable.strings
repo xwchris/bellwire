@@ -5,6 +5,13 @@
 "Follow system" = "跟随系统";
 "English" = "English";
 "Simplified Chinese" = "简体中文";
+"Danger zone" = "危险操作";
+"Delete project" = "删除项目";
+"Delete project?" = "删除项目？";
+"Deleting project…" = "正在删除项目…";
+"Delete this project and all of its associated data permanently." = "永久删除此项目及其全部关联数据。";
+"This permanently deletes the project, its events, notification configuration, tokens, and live surfaces. This action cannot be undone." = "这将永久删除项目、事件、通知配置、令牌和实时卡片。此操作无法撤销。";
+"Permanently deletes this project and all associated data" = "永久删除此项目及全部关联数据";
 
 "Home" = "首页";
 "Projects" = "项目";

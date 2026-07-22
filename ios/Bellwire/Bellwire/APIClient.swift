@@ -35,6 +35,23 @@ struct APIClient {
         method: HTTPMethod = .get,
         body: (any Encodable)? = nil
     ) async throws -> Response {
+        let data = try await performAPIRequest(path, method: method, body: body)
+        return try decoder.decode(Response.self, from: data)
+    }
+
+    func requestVoid(
+        _ path: String,
+        method: HTTPMethod,
+        body: (any Encodable)? = nil
+    ) async throws {
+        _ = try await performAPIRequest(path, method: method, body: body)
+    }
+
+    private func performAPIRequest(
+        _ path: String,
+        method: HTTPMethod,
+        body: (any Encodable)?
+    ) async throws -> Data {
         let token = try await accessTokenProvider()
         let baseURL = AppConfig.apiBaseURL.appendingPathComponent("")
         guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
@@ -56,7 +73,7 @@ struct APIClient {
             }
             throw ClientError.httpStatus(http.statusCode)
         }
-        return try decoder.decode(Response.self, from: data)
+        return data
     }
 
     func exchangeAppleIdentityToken(_ identityToken: String, nonce: String) async throws -> AuthSession {

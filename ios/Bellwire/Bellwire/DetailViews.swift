@@ -215,23 +215,30 @@ struct EventDetailView: View {
 
 struct ProjectDetailView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
     let projectID: String
     @State private var overview: ProjectOverview?
     @State private var events: [InboxEvent] = []
     @State private var errorMessage: String?
     @State private var isUpdating = false
+    @State private var isDeleting = false
+    @State private var showsDeleteConfirmation = false
     @State private var copiedEndpoint = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: BellwireSpacing.section) {
                 if let overview {
+                    if let errorMessage {
+                        ErrorBanner(message: errorMessage) { self.errorMessage = nil }
+                    }
                     projectHeader(overview)
                     health(overview)
                     liveSurfaces(overview)
                     recentEvents
                     eventTypes(overview)
                     endpoint(overview)
+                    dangerZone
                 } else if let errorMessage {
                     EmptyState(icon: "wifi.exclamationmark", title: "Project unavailable", message: errorMessage)
                         .bellwireSurface(elevated: false)
@@ -254,13 +261,21 @@ struct ProjectDetailView: View {
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(BellwireTheme.accent)
-                    .disabled(isUpdating)
+                    .disabled(isUpdating || isDeleting)
                     .accessibilityHint(project.status == "paused" ? "Resumes project notifications" : "Pauses project notifications")
                 }
             }
         }
         .refreshable { await load() }
         .task(id: projectID) { await load() }
+        .alert("Delete project?", isPresented: $showsDeleteConfirmation) {
+            Button("Delete project", role: .destructive) {
+                Task { await deleteProject() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes the project, its events, notification configuration, tokens, and live surfaces. This action cannot be undone.")
+        }
     }
 
     private func projectHeader(_ project: ProjectOverview) -> some View {
@@ -366,6 +381,43 @@ struct ProjectDetailView: View {
         }
     }
 
+    private var dangerZone: some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Danger zone")
+            VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                Text("Delete this project and all of its associated data permanently.")
+                    .font(.subheadline)
+                    .foregroundStyle(BellwireTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(role: .destructive) {
+                    showsDeleteConfirmation = true
+                } label: {
+                    HStack(spacing: BellwireSpacing.compact) {
+                        if isDeleting {
+                            ProgressView()
+                                .tint(BellwireTheme.danger)
+                        } else {
+                            Image(systemName: "trash")
+                        }
+                        Text(isDeleting ? "Deleting project…" : "Delete project")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(BellwireTheme.danger)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(
+                        BellwireTheme.danger.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: BellwireRadius.small, style: .continuous)
+                    )
+                }
+                .buttonStyle(PressableButtonStyle())
+                .disabled(isDeleting || isUpdating)
+                .accessibilityHint("Permanently deletes this project and all associated data")
+            }
+            .padding(BellwireSpacing.standard)
+            .bellwireSurface(radius: BellwireRadius.card, elevated: false)
+        }
+    }
+
     private func eventTypes(_ project: ProjectOverview) -> some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
             SectionHeaderView(title: "Configured event types", hint: schemaHint(project))
@@ -446,6 +498,21 @@ struct ProjectDetailView: View {
             await load()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteProject() async {
+        guard !isDeleting else { return }
+        isDeleting = true
+        errorMessage = nil
+        do {
+            try await model.deleteProject(id: projectID)
+            BellwireHaptics.success()
+            dismiss()
+        } catch {
+            isDeleting = false
+            errorMessage = error.localizedDescription
+            BellwireHaptics.error()
         }
     }
 

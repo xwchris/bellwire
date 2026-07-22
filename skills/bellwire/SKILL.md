@@ -48,6 +48,7 @@ Use [scripts/bellwire.mjs](scripts/bellwire.mjs) for API operations. It defaults
 ```bash
 node <skill-dir>/scripts/bellwire.mjs create-project --name "VideoSays" --logo-url "https://videosays.com/logo.png"
 node <skill-dir>/scripts/bellwire.mjs update-project --project <id> --logo-url "https://cdn.example.com/logo.png"
+node <skill-dir>/scripts/bellwire.mjs delete-project --project <id>
 node <skill-dir>/scripts/bellwire.mjs create-schema --project <id> --file event-spec.json
 node <skill-dir>/scripts/bellwire.mjs create-token --project <id> --name production
 node <skill-dir>/scripts/bellwire.mjs upsert-surface --project <id> --key prod-api --file surface.json
@@ -56,6 +57,10 @@ node <skill-dir>/scripts/bellwire.mjs send-test --project <id> --file test-event
 node <skill-dir>/scripts/bellwire.mjs event --event <event-id>
 node <skill-dir>/scripts/bellwire.mjs health --project <id>
 ```
+
+`delete-project` is permanent and cascades through the project's schemas, tokens, events,
+deliveries, and live Surfaces. Resolve the exact project ID and require explicit user intent
+before running it.
 
 Use `--json` for machine-readable output. Read [api.md](references/api.md) when adding another operation or diagnosing an error response.
 

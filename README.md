@@ -134,7 +134,7 @@ Ingestion uses a project-scoped Ingest token.
 | `GET, POST` | `/v1/devices` | List or register iOS devices |
 | `DELETE` | `/v1/devices/:deviceId` | Remove an owned device |
 | `GET, POST` | `/v1/projects` | List or create projects |
-| `GET, PATCH` | `/v1/projects/:projectId` | Inspect or pause a project |
+| `GET, PATCH, DELETE` | `/v1/projects/:projectId` | Inspect, update, or permanently delete a project |
 | `POST` | `/v1/projects/:projectId/event-schemas` | Create a versioned Event Schema |
 | `POST` | `/v1/projects/:projectId/notification-surfaces` | Create a notification Surface |
 | `GET` | `/v1/surfaces` | List current live Surfaces across projects |
