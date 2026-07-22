@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type {
   BellwireEvent,
   AgentToken,
@@ -26,6 +27,9 @@ export interface CreateDeliveryResult {
 
 export interface BellwireRepository {
   deleteAccount(userId: string): Promise<void>;
+  saveAppleRefreshToken(userId: string, encryptedRefreshToken: string): Promise<void>;
+  getAppleRefreshToken(userId: string): Promise<string | undefined>;
+  deleteAppleRefreshToken(userId: string): Promise<void>;
 
   createProject(project: Project): Promise<Project>;
   getProject(projectId: string): Promise<Project | undefined>;

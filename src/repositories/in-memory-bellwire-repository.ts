@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type {
   BellwireEvent,
   AgentToken,
@@ -37,6 +38,7 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   private readonly deliveries = new Map<string, Delivery>();
   private readonly deliveryByEventDevice = new Map<string, string>();
   private readonly rateLimits = new Map<string, { count: number; startedAt: number }>();
+  private readonly appleRefreshTokens = new Map<string, string>();
 
   async deleteAccount(userId: string): Promise<void> {
     const projectIds = [...this.projects.values()]
@@ -53,6 +55,19 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     for (const [tokenId, token] of this.agentTokens) {
       if (token.userId === userId) this.agentTokens.delete(tokenId);
     }
+    this.appleRefreshTokens.delete(userId);
+  }
+
+  async saveAppleRefreshToken(userId: string, encryptedRefreshToken: string): Promise<void> {
+    this.appleRefreshTokens.set(userId, encryptedRefreshToken);
+  }
+
+  async getAppleRefreshToken(userId: string): Promise<string | undefined> {
+    return this.appleRefreshTokens.get(userId);
+  }
+
+  async deleteAppleRefreshToken(userId: string): Promise<void> {
+    this.appleRefreshTokens.delete(userId);
   }
 
   async createProject(project: Project): Promise<Project> {

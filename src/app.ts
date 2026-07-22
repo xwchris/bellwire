@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { Hono, type Context } from "hono";
 
 import { compatibility } from "./compatibility";
@@ -57,6 +58,12 @@ export function createApp(dependencies: {
   app.delete("/v1/account", async (context) => {
     const principal = await authenticate(context, dependencies.authenticator);
     await dependencies.service.deleteAccount(principal);
+    return context.body(null, 204);
+  });
+
+  app.post("/v1/auth/apple/authorization", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    await dependencies.service.saveAppleAuthorization(principal, await readJson(context.req.raw));
     return context.body(null, 204);
   });
 

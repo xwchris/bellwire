@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app";
@@ -121,7 +122,7 @@ describe("Bellwire MVP API", () => {
       compatibility: {
         appVersion: "1.0.0",
         apiVersion: "v1",
-        schemaMigration: "202607220002",
+        schemaMigration: "202607230001",
       },
     });
   });

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import {
   AGENT_SCOPES,
   EVENT_FIELD_TYPES,
@@ -20,6 +21,7 @@ import {
 import type { BellwireRepository } from "../repositories/bellwire-repository";
 import { createOpaqueToken, createPairingCode, hashSecret, readBearerToken } from "../security/tokens";
 import type { DeliveryDispatcher } from "./delivery-dispatcher";
+import type { AppleAuthService } from "./apple-auth-service";
 
 type ErrorCode =
   | "INVALID_REQUEST"
@@ -82,12 +84,24 @@ export class BellwireService {
   constructor(
     readonly repository: BellwireRepository,
     private readonly deliveryDispatcher?: DeliveryDispatcher,
+    private readonly appleAuthService?: AppleAuthService,
   ) {}
+
+  async saveAppleAuthorization(principal: Principal, input: unknown): Promise<void> {
+    if (principal.kind !== "user") {
+      throw new ServiceError(403, "FORBIDDEN", "Only a signed-in user can register Apple authorization");
+    }
+    const code = readNonEmptyString(asRecord(input).authorizationCode);
+    if (!code) throw invalidRequest("Apple authorization code is required");
+    if (!this.appleAuthService) throw new Error("Apple authentication is not configured");
+    await this.appleAuthService.saveAuthorizationCode(principal.userId, code);
+  }
 
   async deleteAccount(principal: Principal): Promise<void> {
     if (principal.kind !== "user") {
       throw new ServiceError(403, "FORBIDDEN", "Only a signed-in user can delete an account");
     }
+    await this.appleAuthService?.revokeForUser(principal.userId);
     await this.repository.deleteAccount(principal.userId);
   }
 

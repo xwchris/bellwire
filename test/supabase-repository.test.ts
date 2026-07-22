@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -11,6 +12,34 @@ import type {
 import { SupabaseBellwireRepository } from "../src/repositories/supabase-bellwire-repository";
 
 describe("SupabaseBellwireRepository", () => {
+  it("upserts and reads an encrypted Apple refresh token through the private table", async () => {
+    const requests: Request[] = [];
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return request.method === "GET"
+          ? Response.json([{ refresh_token_ciphertext: "v1.iv.ciphertext" }])
+          : new Response(null, { status: 204 });
+      },
+    );
+
+    await repository.saveAppleRefreshToken("user-1", "v1.iv.ciphertext");
+    expect(await repository.getAppleRefreshToken("user-1")).toBe("v1.iv.ciphertext");
+
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.url).toContain("/apple_auth_tokens?on_conflict=user_id");
+    expect(requests[0]?.headers.get("prefer")).toBe("resolution=merge-duplicates,return=minimal");
+    expect(await requests[0]?.json()).toMatchObject({
+      user_id: "user-1",
+      refresh_token_ciphertext: "v1.iv.ciphertext",
+    });
+    expect(requests[1]?.url).toContain("user_id=eq.user-1");
+    expect(requests[1]?.url).toContain("select=refresh_token_ciphertext");
+  });
+
   it("deletes the authenticated account through the Supabase Auth admin API", async () => {
     let request: Request | undefined;
     const repository = new SupabaseBellwireRepository(

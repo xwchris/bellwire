@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type {
   BellwireEvent,
   AgentToken,
@@ -66,6 +67,32 @@ export class SupabaseBellwireRepository implements BellwireRepository {
       // Preserve non-JSON Auth responses for diagnostics.
     }
     throw new SupabaseRequestError(response.status, body);
+  }
+
+  async saveAppleRefreshToken(userId: string, encryptedRefreshToken: string): Promise<void> {
+    await this.request("/apple_auth_tokens?on_conflict=user_id", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        refresh_token_ciphertext: encryptedRefreshToken,
+        updated_at: new Date().toISOString(),
+      },
+      prefer: "resolution=merge-duplicates,return=minimal",
+    });
+  }
+
+  async getAppleRefreshToken(userId: string): Promise<string | undefined> {
+    return this.one(
+      "/apple_auth_tokens",
+      { user_id: `eq.${userId}`, select: "refresh_token_ciphertext" },
+      (row) => optionalString(row.refresh_token_ciphertext),
+    );
+  }
+
+  async deleteAppleRefreshToken(userId: string): Promise<void> {
+    await this.request(`/apple_auth_tokens?${params({ user_id: `eq.${userId}` })}`, {
+      method: "DELETE",
+    });
   }
 
   async createProject(project: Project): Promise<Project> {

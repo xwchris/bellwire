@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import AuthenticationServices
 import CryptoKit
 import Security
@@ -84,10 +85,18 @@ final class AppModel: ObservableObject {
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                   let tokenData = credential.identityToken,
                   let identityToken = String(data: tokenData, encoding: .utf8),
+                  let codeData = credential.authorizationCode,
+                  let authorizationCode = String(data: codeData, encoding: .utf8),
                   let nonce = currentNonce
-            else { throw ClientError.api(code: "APPLE_TOKEN_MISSING", message: "Apple did not return a valid identity token.") }
+            else { throw ClientError.api(code: "APPLE_TOKEN_MISSING", message: "Apple did not return valid authorization credentials.") }
             let newSession = try await api.exchangeAppleIdentityToken(identityToken, nonce: nonce)
             try saveSession(newSession)
+            do {
+                try await api.saveAppleAuthorizationCode(authorizationCode)
+            } catch {
+                signOut()
+                throw error
+            }
             await loadDashboard(showLoading: true)
             if let apnsToken {
                 await registerDevice(apnsToken)

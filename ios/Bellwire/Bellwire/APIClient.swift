@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import Foundation
 
 enum HTTPMethod: String {
@@ -93,6 +94,15 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try supabaseEncoder.encode(Payload(idToken: identityToken, nonce: nonce))
         return try await performSupabaseTokenRequest(request)
+    }
+
+    func saveAppleAuthorizationCode(_ authorizationCode: String) async throws {
+        struct Payload: Encodable { let authorizationCode: String }
+        try await requestVoid(
+            "v1/auth/apple/authorization",
+            method: .post,
+            body: Payload(authorizationCode: authorizationCode)
+        )
     }
 
     func refreshSession(_ refreshToken: String) async throws -> AuthSession {
