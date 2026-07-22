@@ -329,7 +329,9 @@ enum EventFilter: String, CaseIterable, Identifiable {
 struct InboxView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var path: [AppRoute] = []
+    @State private var hasPresentedGreeting = false
     let onOpenEvents: (_ preferUnread: Bool) -> Void
 
     init(onOpenEvents: @escaping (_ preferUnread: Bool) -> Void = { _ in }) {
@@ -368,6 +370,11 @@ struct InboxView: View {
                 path.append(.event(id))
                 model.pendingEventID = nil
             }
+            .task {
+                guard !hasPresentedGreeting else { return }
+                if !reduceMotion { await Task.yield() }
+                hasPresentedGreeting = true
+            }
         }
     }
 
@@ -376,11 +383,27 @@ struct InboxView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(BellwireDateFormatting.headerDate(.now, locale: locale))
                     .bellwireTechnicalLabel()
+                    .modifier(
+                        GreetingEntranceModifier(
+                            isPresented: hasPresentedGreeting,
+                            reduceMotion: reduceMotion,
+                            delay: 0.04,
+                            offset: 7
+                        )
+                    )
                 Text(LocalizedStringKey(greeting))
                     .font(BellwireTypography.pageTitle)
                     .tracking(-0.5)
                     .foregroundStyle(BellwireTheme.ink)
                     .accessibilityAddTraits(.isHeader)
+                    .modifier(
+                        GreetingEntranceModifier(
+                            isPresented: hasPresentedGreeting,
+                            reduceMotion: reduceMotion,
+                            delay: 0.13,
+                            offset: 12
+                        )
+                    )
             }
             Spacer()
             Button {
@@ -497,6 +520,28 @@ struct InboxView: View {
         case 12..<18: return "Good afternoon."
         default: return "Good evening."
         }
+    }
+}
+
+private struct GreetingEntranceModifier: ViewModifier {
+    let isPresented: Bool
+    let reduceMotion: Bool
+    let delay: TimeInterval
+    let offset: CGFloat
+
+    private var isVisible: Bool { reduceMotion || isPresented }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .offset(y: isVisible ? 0 : offset)
+            .blur(radius: isVisible ? 0 : 4)
+            .animation(
+                reduceMotion
+                    ? nil
+                    : .timingCurve(0.2, 0, 0, 1, duration: 0.44).delay(delay),
+                value: isPresented
+            )
     }
 }
 
