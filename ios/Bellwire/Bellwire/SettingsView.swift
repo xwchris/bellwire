@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var isGeneratingBinding = false
     @State private var showsAgentInstructions = false
     @State private var showsSignOutConfirmation = false
+    @State private var showsDeleteAccountPage = false
     @State private var showsFeedbackMail = false
     @State private var showsFeedbackFallback = false
     @State private var feedbackEmailCopied = false
@@ -79,15 +80,17 @@ struct SettingsView: View {
             } message: {
                 Text("No mail account is configured. Copy the feedback email instead?")
             }
-            .confirmationDialog(
+            .alert(
                 "Sign out of Bellwire?",
-                isPresented: $showsSignOutConfirmation,
-                titleVisibility: .visible
+                isPresented: $showsSignOutConfirmation
             ) {
                 Button("Sign out", role: .destructive) { model.signOut() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Your local session will be removed. Connected projects and server data are not deleted.")
+            }
+            .navigationDestination(isPresented: $showsDeleteAccountPage) {
+                DeleteAccountView()
             }
         }
     }
@@ -306,19 +309,35 @@ struct SettingsView: View {
     private var supportSection: some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
             SectionHeaderView(title: "Support")
-            Button { openFeedback() } label: {
-                SettingsRowView(
-                    icon: feedbackEmailCopied ? "checkmark" : "bubble.left.and.bubble.right",
-                    title: "Send feedback",
-                    hint: feedbackEmailCopied ? "Feedback email copied" : "Help improve Bellwire"
-                ) {
-                    Image(systemName: feedbackEmailCopied ? "checkmark" : "arrow.up.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(feedbackEmailCopied ? BellwireTheme.success : BellwireTheme.mutedInk)
+            VStack(spacing: 0) {
+                Button { openSupport() } label: {
+                    SettingsRowView(
+                        icon: "questionmark.circle",
+                        title: "Help and support",
+                        hint: "Setup help and troubleshooting"
+                    ) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                    }
                 }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityHint("Opens Bellwire support in your browser")
+                Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
+                Button { openFeedback() } label: {
+                    SettingsRowView(
+                        icon: feedbackEmailCopied ? "checkmark" : "bubble.left.and.bubble.right",
+                        title: "Send feedback",
+                        hint: feedbackEmailCopied ? "Feedback email copied" : "Help improve Bellwire"
+                    ) {
+                        Image(systemName: feedbackEmailCopied ? "checkmark" : "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(feedbackEmailCopied ? BellwireTheme.success : BellwireTheme.mutedInk)
+                    }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityHint("Opens an email to Bellwire support")
             }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityHint("Opens an email to Bellwire support")
             .padding(.horizontal, BellwireSpacing.standard)
             .bellwireSurface()
         }
@@ -342,10 +361,38 @@ struct SettingsView: View {
                 .buttonStyle(PressableButtonStyle())
                 .accessibilityHint("Opens the Bellwire privacy policy in your browser")
                 Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
+                Button { openTermsOfService() } label: {
+                    SettingsRowView(
+                        icon: "doc.text",
+                        title: "Terms of service",
+                        hint: "Rules for using Bellwire"
+                    ) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                    }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityHint("Opens the Bellwire terms of service in your browser")
+                Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
                 Button { showsSignOutConfirmation = true } label: {
                     SettingsRowView(
                         icon: "rectangle.portrait.and.arrow.right",
                         title: "Sign out",
+                        tone: BellwireTheme.danger
+                    ) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.danger)
+                    }
+                }
+                .buttonStyle(PressableButtonStyle())
+                Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
+                Button { showsDeleteAccountPage = true } label: {
+                    SettingsRowView(
+                        icon: "person.crop.circle.badge.minus",
+                        title: "Delete account",
+                        hint: "Permanently delete your account and data",
                         tone: BellwireTheme.danger
                     ) {
                         Image(systemName: "chevron.right")
@@ -444,6 +491,142 @@ struct SettingsView: View {
     private func openPrivacyPolicy() {
         guard let url = URL(string: "https://bellwire.app/privacy") else { return }
         openURL(url)
+    }
+
+    private func openTermsOfService() {
+        guard let url = URL(string: "https://bellwire.app/terms") else { return }
+        openURL(url)
+    }
+
+    private func openSupport() {
+        guard let url = URL(string: "https://bellwire.app/support") else { return }
+        openURL(url)
+    }
+}
+
+private struct DeleteAccountView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var showsFinalConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var deletionError: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: BellwireSpacing.section) {
+                VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                    Image(systemName: "person.crop.circle.badge.minus")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(BellwireTheme.danger)
+                        .frame(width: 58, height: 58)
+                        .background(BellwireTheme.danger.opacity(0.12), in: Circle())
+
+                    Text("Delete your account?")
+                        .font(BellwireTypography.pageTitle)
+                        .foregroundStyle(BellwireTheme.ink)
+                        .accessibilityAddTraits(.isHeader)
+
+                    Text("Your Bellwire account and all connected data will be permanently deleted.")
+                        .font(.body)
+                        .foregroundStyle(BellwireTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                    Text("This will delete")
+                        .bellwireTechnicalLabel()
+                    deletionItem(icon: "square.stack.3d.up", title: "Projects and live cards")
+                    deletionItem(icon: "tray.full", title: "Events and notification history")
+                    deletionItem(icon: "iphone", title: "Registered devices")
+                    deletionItem(icon: "link", title: "Agent connections and access tokens")
+                }
+                .padding(BellwireSpacing.standard)
+                .bellwireSurface(elevated: false)
+
+                HStack(alignment: .top, spacing: BellwireSpacing.small) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(BellwireTheme.danger)
+                    Text("This action cannot be undone. You will need to create a new account to use Bellwire again.")
+                        .font(.subheadline)
+                        .foregroundStyle(BellwireTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let deletionError {
+                    ErrorBanner(message: deletionError) {
+                        self.deletionError = nil
+                    }
+                }
+
+                Button {
+                    showsFinalConfirmation = true
+                } label: {
+                    HStack(spacing: BellwireSpacing.compact) {
+                        if isDeletingAccount {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "trash")
+                        }
+                        Text(isDeletingAccount ? "Deleting account…" : "Permanently delete account")
+                            .font(.body.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 52)
+                    .background(BellwireTheme.danger, in: RoundedRectangle(cornerRadius: BellwireRadius.control, style: .continuous))
+                }
+                .buttonStyle(PressableButtonStyle())
+                .disabled(isDeletingAccount)
+            }
+            .padding(.horizontal, BellwireSpacing.roomy)
+            .padding(.top, BellwireSpacing.standard)
+            .padding(.bottom, BellwireSpacing.large)
+        }
+        .bellwirePageBackground()
+        .navigationTitle("Delete account")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .interactiveDismissDisabled(isDeletingAccount)
+        .alert(
+            "Permanently delete your Bellwire account?",
+            isPresented: $showsFinalConfirmation
+        ) {
+            Button("Delete account and data", role: .destructive) {
+                deleteAccount()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account and all Bellwire data. This action cannot be undone.")
+        }
+    }
+
+    private func deletionItem(icon: String, title: String) -> some View {
+        HStack(spacing: BellwireSpacing.small) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(BellwireTheme.danger)
+                .frame(width: 28, height: 28)
+                .background(BellwireTheme.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: BellwireRadius.small, style: .continuous))
+            Text(LocalizedStringKey(title))
+                .font(.subheadline)
+                .foregroundStyle(BellwireTheme.ink)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func deleteAccount() {
+        guard !isDeletingAccount else { return }
+        deletionError = nil
+        isDeletingAccount = true
+        Task {
+            let deleted = await model.deleteAccount()
+            isDeletingAccount = false
+            if deleted {
+                dismiss()
+            } else {
+                deletionError = model.errorMessage ?? String(localized: "Unable to delete account. Please try again.")
+            }
+        }
     }
 }
 

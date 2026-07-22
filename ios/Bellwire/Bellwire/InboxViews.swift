@@ -349,6 +349,29 @@ struct InboxView: View {
                         ErrorBanner(message: error) { model.errorMessage = nil }
                     }
 
+                    if !model.isLoading && model.projects.isEmpty {
+                        VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                            VStack(alignment: .leading, spacing: BellwireSpacing.compact) {
+                                Text("Explore Bellwire")
+                                    .font(.headline)
+                                    .foregroundStyle(BellwireTheme.ink)
+                                Text("Create a private sample project with a live card and event. You can delete it at any time.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(BellwireTheme.mutedInk)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            PrimaryButton(
+                                title: model.isCreatingDemo ? "Creating demo…" : "Create demo project",
+                                systemImage: "sparkles",
+                                isLoading: model.isCreatingDemo
+                            ) {
+                                Task { await model.createDemoExperience() }
+                            }
+                        }
+                        .padding(BellwireSpacing.standard)
+                        .bellwireSurface()
+                    }
+
                     liveSection
                     eventsSection
                 }

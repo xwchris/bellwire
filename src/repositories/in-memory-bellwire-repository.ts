@@ -38,6 +38,23 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   private readonly deliveryByEventDevice = new Map<string, string>();
   private readonly rateLimits = new Map<string, { count: number; startedAt: number }>();
 
+  async deleteAccount(userId: string): Promise<void> {
+    const projectIds = [...this.projects.values()]
+      .filter((project) => project.userId === userId)
+      .map((project) => project.id);
+    for (const projectId of projectIds) await this.deleteProject(projectId);
+
+    for (const [deviceId, device] of this.devices) {
+      if (device.userId === userId) this.devices.delete(deviceId);
+    }
+    for (const [bindingId, binding] of this.deviceBindings) {
+      if (binding.userId === userId) this.deviceBindings.delete(bindingId);
+    }
+    for (const [tokenId, token] of this.agentTokens) {
+      if (token.userId === userId) this.agentTokens.delete(tokenId);
+    }
+  }
+
   async createProject(project: Project): Promise<Project> {
     this.projects.set(project.id, copy(project));
     return copy(project);
@@ -50,13 +67,21 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   async listProjects(userId: string): Promise<Project[]> {
     return [...this.projects.values()]
       .filter((project) => project.userId === userId)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort(compareDisplayOrder)
       .map(copy);
   }
 
   async updateProject(project: Project): Promise<Project> {
     this.projects.set(project.id, copy(project));
     return copy(project);
+  }
+
+  async updateProjectDisplayOrder(projectId: string, displayOrder: number): Promise<Project> {
+    const project = this.projects.get(projectId);
+    if (!project) throw new Error("Project not found");
+    const updated = { ...project, displayOrder };
+    this.projects.set(projectId, copy(updated));
+    return copy(updated);
   }
 
   async deleteProject(projectId: string): Promise<void> {
@@ -235,8 +260,16 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   async listLiveSurfaces(projectId: string): Promise<LiveSurface[]> {
     return [...this.liveSurfaces.values()]
       .filter((surface) => surface.projectId === projectId)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort(compareDisplayOrder)
       .map(copy);
+  }
+
+  async updateLiveSurfaceDisplayOrder(surfaceId: string, displayOrder: number): Promise<LiveSurface> {
+    const entry = [...this.liveSurfaces.entries()].find(([, surface]) => surface.id === surfaceId);
+    if (!entry) throw new Error("Live Surface not found");
+    const updated = { ...entry[1], displayOrder };
+    this.liveSurfaces.set(entry[0], copy(updated));
+    return copy(updated);
   }
 
   async deleteLiveSurface(surfaceId: string): Promise<void> {
@@ -462,4 +495,11 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   private projectTypeKey(projectId: string, value: string): string {
     return `${projectId}:${value}`;
   }
+}
+
+function compareDisplayOrder(
+  left: { displayOrder: number; id: string },
+  right: { displayOrder: number; id: string },
+): number {
+  return left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
 }

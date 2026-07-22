@@ -18,14 +18,20 @@
     <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
     <key>CFBundleShortVersionString</key>
     <string>$(MARKETING_VERSION)</string>
+    <key>BellwireAPIBaseURL</key>
+    <string>$(BELLWIRE_API_BASE_URL)</string>
+    <key>BellwireSupabaseURL</key>
+    <string>$(BELLWIRE_SUPABASE_URL)</string>
+    <key>BellwireSupabasePublishableKey</key>
+    <string>$(BELLWIRE_SUPABASE_PUBLISHABLE_KEY)</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>app.bellwire</string>
+            <string>$(BELLWIRE_APP_BUNDLE_ID)</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>bellwire</string>
+                <string>$(BELLWIRE_URL_SCHEME)</string>
             </array>
         </dict>
     </array>
@@ -33,6 +39,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

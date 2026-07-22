@@ -11,6 +11,27 @@ import type {
 import { SupabaseBellwireRepository } from "../src/repositories/supabase-bellwire-repository";
 
 describe("SupabaseBellwireRepository", () => {
+  it("deletes the authenticated account through the Supabase Auth admin API", async () => {
+    let request: Request | undefined;
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co/",
+      "service-role-key",
+      async (input, init) => {
+        request = new Request(input, init);
+        return new Response(null, { status: 204 });
+      },
+    );
+
+    await repository.deleteAccount("user/with-special-character");
+
+    expect(request?.method).toBe("DELETE");
+    expect(request?.url).toBe(
+      "https://example.supabase.co/auth/v1/admin/users/user%2Fwith-special-character",
+    );
+    expect(request?.headers.get("apikey")).toBe("service-role-key");
+    expect(request?.headers.get("authorization")).toBe("Bearer service-role-key");
+  });
+
   it("deletes a project through its exact primary-key filter", async () => {
     let request: Request | undefined;
     const repository = new SupabaseBellwireRepository(
@@ -115,6 +136,7 @@ describe("SupabaseBellwireRepository", () => {
       subtitle: "Production",
       content: { metrics: [{ label: "CPU", value: 18, unit: "%" }] },
       action: null,
+      display_order: 0,
       version: 2,
       created_at: "2026-07-21T00:00:00.000Z",
       updated_at: "2026-07-21T00:05:00.000Z",
@@ -136,6 +158,7 @@ describe("SupabaseBellwireRepository", () => {
       title: "API health",
       subtitle: "Production",
       content: { metrics: [{ label: "CPU", value: 18, unit: "%" }] },
+      displayOrder: 0,
       version: 2,
       createdAt: "2026-07-21T00:00:00.000Z",
       updatedAt: "2026-07-21T00:05:00.000Z",

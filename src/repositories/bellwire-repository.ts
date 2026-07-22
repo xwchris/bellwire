@@ -25,10 +25,13 @@ export interface CreateDeliveryResult {
 }
 
 export interface BellwireRepository {
+  deleteAccount(userId: string): Promise<void>;
+
   createProject(project: Project): Promise<Project>;
   getProject(projectId: string): Promise<Project | undefined>;
   listProjects(userId: string): Promise<Project[]>;
   updateProject(project: Project): Promise<Project>;
+  updateProjectDisplayOrder(projectId: string, displayOrder: number): Promise<Project>;
   deleteProject(projectId: string): Promise<void>;
 
   saveDevice(device: Device): Promise<Device>;
@@ -64,6 +67,7 @@ export interface BellwireRepository {
   saveLiveSurface(surface: LiveSurface): Promise<LiveSurface>;
   getLiveSurface(projectId: string, surfaceKey: string): Promise<LiveSurface | undefined>;
   listLiveSurfaces(projectId: string): Promise<LiveSurface[]>;
+  updateLiveSurfaceDisplayOrder(surfaceId: string, displayOrder: number): Promise<LiveSurface>;
   deleteLiveSurface(surfaceId: string): Promise<void>;
 
   saveIngestToken(token: IngestToken): Promise<IngestToken>;

@@ -9,7 +9,8 @@ preview_urls = false
 APP_ENV = "production"
 SUPABASE_URL = "https://cvyidqbjjkfzoxykkbea.supabase.co"
 APNS_BUNDLE_ID = "app.bellwire"
-APNS_ENVIRONMENT = "sandbox"
+APP_URL_SCHEME = "bellwire"
+APNS_ENVIRONMENT = "production"
 
 [[queues.producers]]
 binding = "DELIVERY_QUEUE"

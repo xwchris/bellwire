@@ -84,10 +84,61 @@ export class BellwireService {
     private readonly deliveryDispatcher?: DeliveryDispatcher,
   ) {}
 
+  async deleteAccount(principal: Principal): Promise<void> {
+    if (principal.kind !== "user") {
+      throw new ServiceError(403, "FORBIDDEN", "Only a signed-in user can delete an account");
+    }
+    await this.repository.deleteAccount(principal.userId);
+  }
+
+  async createDemoExperience(principal: Principal): Promise<{ projectId: string; created: boolean }> {
+    if (principal.kind !== "user") {
+      throw new ServiceError(403, "FORBIDDEN", "Only a signed-in user can create the demo project");
+    }
+    const existing = (await this.repository.listProjects(principal.userId))
+      .find((project) => project.category === "demo" && project.name === "Bellwire Demo");
+    if (existing) return { projectId: existing.id, created: false };
+
+    const project = await this.createProject(principal, {
+      name: "Bellwire Demo",
+      category: "demo",
+      icon: "bell.and.waves.left.and.right",
+    });
+    await this.createEventSchema(principal, project.id, {
+      eventType: "deployment.completed",
+      fields: {
+        deployment: { type: "string", required: true },
+        environment: { type: "enum", required: true, values: ["Production"] },
+        duration: { type: "number", required: true },
+      },
+      notification: {
+        title: "Deployment completed",
+        body: "{{ deployment }} reached {{ environment }} in {{ duration }}s",
+      },
+    });
+    await this.upsertLiveSurface(principal, project.id, "demo-status", {
+      type: "stats",
+      title: "Bellwire is connected",
+      subtitle: "Live sample data",
+      metrics: [
+        { label: "Status", value: "Healthy", color: "green" },
+        { label: "Events", value: 1, color: "orange" },
+        { label: "Agents", value: 1, color: "blue" },
+      ],
+    });
+    await this.sendTestEvent(principal, project.id, {
+      type: "deployment.completed",
+      data: { deployment: "Bellwire 1.0", environment: "Production", duration: 24 },
+      occurredAt: new Date().toISOString(),
+    });
+    return { projectId: project.id, created: true };
+  }
+
   async createProject(principal: Principal, input: unknown): Promise<Project> {
     const body = asRecord(input);
     const name = readNonEmptyString(body.name);
     if (!name) throw invalidRequest("Project name is required");
+    const existingProjects = await this.repository.listProjects(principal.userId);
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     return this.repository.createProject({
@@ -97,6 +148,7 @@ export class BellwireService {
       slug: `${slugify(name)}-${id.slice(0, 6)}`,
       icon: readNonEmptyString(body.icon) ?? "bolt.horizontal",
       logoUrl: readProjectLogoUrl(body.logoUrl),
+      displayOrder: nextDisplayOrder(existingProjects),
       category: readNonEmptyString(body.category) ?? "general",
       status: "active",
       endpoint: `/v1/events/${id}`,
@@ -138,6 +190,18 @@ export class BellwireService {
       category: readNonEmptyString(body.category) ?? project.category,
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  async updateProjectDisplayOrder(
+    principal: Principal,
+    projectId: string,
+    input: unknown,
+  ): Promise<Project> {
+    await this.requireOwnedProject(principal, projectId);
+    return this.repository.updateProjectDisplayOrder(
+      projectId,
+      parseDisplayOrder(asRecord(input).displayOrder),
+    );
   }
 
   async deleteProject(principal: Principal, projectId: string): Promise<void> {
@@ -349,6 +413,8 @@ export class BellwireService {
       return existing;
     }
     const now = new Date().toISOString();
+    const displayOrder = existing?.displayOrder
+      ?? nextDisplayOrder(await this.repository.listLiveSurfaces(projectId));
     return this.repository.saveLiveSurface({
       id: crypto.randomUUID(),
       projectId,
@@ -358,6 +424,7 @@ export class BellwireService {
       ...(subtitle ? { subtitle } : {}),
       content,
       ...(action ? { action } : {}),
+      displayOrder,
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -374,12 +441,31 @@ export class BellwireService {
     })));
     return {
       surfaces: groups
-        .flatMap(({ project, surfaces }) => surfaces.map((surface) => ({
+        .flatMap(({ project, surfaces }) => surfaces.map((surface) => ({ project, surface })))
+        .sort((left, right) =>
+          compareDisplayOrder(left.project, right.project)
+          || compareDisplayOrder(left.surface, right.surface))
+        .map(({ project, surface }) => ({
           ...surface,
           project: { id: project.id, name: project.name, icon: project.icon, logoUrl: project.logoUrl },
-        })))
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+        })),
     };
+  }
+
+  async updateLiveSurfaceDisplayOrder(
+    principal: Principal,
+    projectId: string,
+    surfaceKeyValue: string,
+    input: unknown,
+  ): Promise<LiveSurface> {
+    await this.requireOwnedProject(principal, projectId);
+    const surfaceKey = parseSurfaceKey(surfaceKeyValue);
+    const surface = await this.repository.getLiveSurface(projectId, surfaceKey);
+    if (!surface) throw new ServiceError(404, "SURFACE_NOT_FOUND", "Live Surface was not found");
+    return this.repository.updateLiveSurfaceDisplayOrder(
+      surface.id,
+      parseDisplayOrder(asRecord(input).displayOrder),
+    );
   }
 
   async deleteLiveSurface(
@@ -755,6 +841,25 @@ function readProjectLogoUrl(value: unknown): string | undefined {
     throw invalidRequest("Project logo URL must be a public HTTPS URL");
   }
   return logoUrl;
+}
+
+function parseDisplayOrder(value: unknown): number {
+  const displayOrder = readInteger(value);
+  if (displayOrder === undefined || displayOrder < 0 || displayOrder > 1_000_000) {
+    throw invalidRequest("displayOrder must be an integer between 0 and 1000000");
+  }
+  return displayOrder;
+}
+
+function nextDisplayOrder(values: Array<{ displayOrder: number }>): number {
+  return values.reduce((maximum, value) => Math.max(maximum, value.displayOrder), -1) + 1;
+}
+
+function compareDisplayOrder(
+  left: { displayOrder: number; id: string },
+  right: { displayOrder: number; id: string },
+): number {
+  return left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
 }
 
 function parseSurfaceKey(value: unknown): string {

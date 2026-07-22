@@ -112,6 +112,20 @@ describe("Bellwire MVP API", () => {
     });
   }
 
+  it("reports App, API, and database compatibility on the health endpoint", async () => {
+    const response = await app.request("/health");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: "ok",
+      service: "bellwire-api",
+      compatibility: {
+        appVersion: "1.0.0",
+        apiVersion: "v1",
+        schemaMigration: "202607220002",
+      },
+    });
+  });
+
   it("creates a project, schema, surface, and one-time ingest token while storing only its hash", async () => {
     const projectId = await createProject();
     const token = await configureProject(projectId);
@@ -161,6 +175,45 @@ describe("Bellwire MVP API", () => {
       body: JSON.stringify({ logoUrl: "http://example.com/logo.png" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("deletes the signed-in account and all account-owned data", async () => {
+    const projectId = await createProject();
+    await registerDevice();
+
+    const response = await app.request("/v1/account", {
+      method: "DELETE",
+      headers: { authorization: "Bearer test" },
+    });
+
+    expect(response.status).toBe(204);
+    expect(await repository.getProject(projectId)).toBeUndefined();
+    expect(await repository.listProjects(userPrincipal.userId)).toEqual([]);
+    expect(await repository.listDevices(userPrincipal.userId)).toEqual([]);
+  });
+
+  it("creates an idempotent demo experience for App Review", async () => {
+    const first = await app.request("/v1/demo", {
+      method: "POST",
+      headers: { authorization: "Bearer test" },
+    });
+    expect(first.status).toBe(201);
+    const demo = await first.json<{ projectId: string; created: boolean }>();
+    expect(demo.created).toBe(true);
+    expect(await repository.getProject(demo.projectId)).toMatchObject({
+      name: "Bellwire Demo",
+      category: "demo",
+    });
+    expect(await repository.listLiveSurfaces(demo.projectId)).toHaveLength(1);
+    expect((await repository.listEvents(demo.projectId, { limit: 10 })).events).toHaveLength(1);
+
+    const second = await app.request("/v1/demo", {
+      method: "POST",
+      headers: { authorization: "Bearer test" },
+    });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ projectId: demo.projectId, created: false });
+    expect(await repository.listProjects(userPrincipal.userId)).toHaveLength(1);
   });
 
   it("deletes an owned project and all of its project-scoped data", async () => {
@@ -342,6 +395,59 @@ describe("Bellwire MVP API", () => {
     });
     expect(removed.status).toBe(204);
     expect((await repository.listLiveSurfaces(projectId))).toEqual([]);
+  });
+
+  it("keeps project and Surface positions stable across content updates", async () => {
+    const firstProjectId = await createProject();
+    const secondProjectId = await createProject();
+
+    const moveFirstProject = await app.request(`/v1/projects/${firstProjectId}/order`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ displayOrder: 20 }),
+    });
+    expect(moveFirstProject.status).toBe(200);
+
+    const projects = await app.request("/v1/projects", {
+      headers: { authorization: "Bearer test" },
+    });
+    expect((await projects.json<{ projects: Array<{ id: string }> }>()).projects.map(({ id }) => id))
+      .toEqual([secondProjectId, firstProjectId]);
+
+    const upsert = async (key: string, value: string) => app.request(
+      `/v1/projects/${firstProjectId}/surfaces/${key}`,
+      {
+        method: "PUT",
+        headers: { authorization: "Bearer test", "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "stats",
+          title: key,
+          metrics: [{ label: "Revenue", value }],
+        }),
+      },
+    );
+
+    expect((await upsert("revenue-today", "¥10")).status).toBe(200);
+    expect((await upsert("revenue-30d", "¥300")).status).toBe(200);
+    expect((await upsert("revenue-today", "¥20")).status).toBe(200);
+
+    let surfaces = await repository.listLiveSurfaces(firstProjectId);
+    expect(surfaces.map(({ surfaceKey }) => surfaceKey))
+      .toEqual(["revenue-today", "revenue-30d"]);
+    expect(surfaces.map(({ displayOrder }) => displayOrder)).toEqual([0, 1]);
+
+    const moveToday = await app.request(
+      `/v1/projects/${firstProjectId}/surfaces/revenue-today/order`,
+      {
+        method: "PATCH",
+        headers: { authorization: "Bearer test", "content-type": "application/json" },
+        body: JSON.stringify({ displayOrder: 20 }),
+      },
+    );
+    expect(moveToday.status).toBe(200);
+    surfaces = await repository.listLiveSurfaces(firstProjectId);
+    expect(surfaces.map(({ surfaceKey }) => surfaceKey))
+      .toEqual(["revenue-30d", "revenue-today"]);
   });
 
   it("lets a project-scoped Ingest Token update only that project's live Surfaces", async () => {

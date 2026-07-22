@@ -33,13 +33,39 @@ export class SupabaseRequestError extends Error {
 
 export class SupabaseBellwireRepository implements BellwireRepository {
   private readonly restBaseUrl: string;
+  private readonly authBaseUrl: string;
 
   constructor(
     supabaseUrl: string,
     private readonly serviceRoleKey: string,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
   ) {
-    this.restBaseUrl = `${supabaseUrl.replace(/\/$/u, "")}/rest/v1`;
+    const baseUrl = supabaseUrl.replace(/\/$/u, "");
+    this.restBaseUrl = `${baseUrl}/rest/v1`;
+    this.authBaseUrl = `${baseUrl}/auth/v1`;
+  }
+
+  async deleteAccount(userId: string): Promise<void> {
+    const response = await this.fetchImpl(
+      `${this.authBaseUrl}/admin/users/${encodeURIComponent(userId)}`,
+      {
+        method: "DELETE",
+        headers: {
+          apikey: this.serviceRoleKey,
+          authorization: `Bearer ${this.serviceRoleKey}`,
+          "content-type": "application/json",
+        },
+      },
+    );
+    if (response.ok) return;
+    const text = await response.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text) as unknown;
+    } catch {
+      // Preserve non-JSON Auth responses for diagnostics.
+    }
+    throw new SupabaseRequestError(response.status, body);
   }
 
   async createProject(project: Project): Promise<Project> {
@@ -58,7 +84,7 @@ export class SupabaseBellwireRepository implements BellwireRepository {
   async listProjects(userId: string): Promise<Project[]> {
     const rows = await this.getRows("/projects", {
       user_id: `eq.${userId}`,
-      order: "updated_at.desc",
+      order: "display_order.asc,id.asc",
     });
     return rows.map(toProject);
   }
@@ -67,6 +93,14 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     const rows = await this.request<JsonRecord[]>(
       `/projects?${params({ id: `eq.${project.id}` })}`,
       { method: "PATCH", body: projectRow(project), prefer: "return=representation" },
+    );
+    return toProject(requiredFirst(rows));
+  }
+
+  async updateProjectDisplayOrder(projectId: string, displayOrder: number): Promise<Project> {
+    const rows = await this.request<JsonRecord[]>(
+      `/projects?${params({ id: `eq.${projectId}` })}`,
+      { method: "PATCH", body: { display_order: displayOrder }, prefer: "return=representation" },
     );
     return toProject(requiredFirst(rows));
   }
@@ -257,6 +291,7 @@ export class SupabaseBellwireRepository implements BellwireRepository {
         p_subtitle: surface.subtitle ?? null,
         p_content: surface.content,
         p_action: surface.action ?? null,
+        p_display_order: surface.displayOrder,
         p_created_at: surface.createdAt,
         p_updated_at: surface.updatedAt,
       },
@@ -275,9 +310,17 @@ export class SupabaseBellwireRepository implements BellwireRepository {
   async listLiveSurfaces(projectId: string): Promise<LiveSurface[]> {
     const rows = await this.getRows("/live_surfaces", {
       project_id: `eq.${projectId}`,
-      order: "updated_at.desc",
+      order: "display_order.asc,id.asc",
     });
     return rows.map(toLiveSurface);
+  }
+
+  async updateLiveSurfaceDisplayOrder(surfaceId: string, displayOrder: number): Promise<LiveSurface> {
+    const rows = await this.request<JsonRecord[]>(
+      `/live_surfaces?${params({ id: `eq.${surfaceId}` })}`,
+      { method: "PATCH", body: { display_order: displayOrder }, prefer: "return=representation" },
+    );
+    return toLiveSurface(requiredFirst(rows));
   }
 
   async deleteLiveSurface(surfaceId: string): Promise<void> {
@@ -564,7 +607,8 @@ function optionalString(value: unknown): string | undefined {
 function projectRow(value: Project): JsonRecord {
   return {
     id: value.id, user_id: value.userId, name: value.name, slug: value.slug,
-    icon: value.icon, logo_url: value.logoUrl ?? null, category: value.category, status: value.status,
+    icon: value.icon, logo_url: value.logoUrl ?? null, display_order: value.displayOrder,
+    category: value.category, status: value.status,
     endpoint: value.endpoint, created_at: value.createdAt, updated_at: value.updatedAt,
   };
 }
@@ -572,7 +616,8 @@ function projectRow(value: Project): JsonRecord {
 function toProject(row: JsonRecord): Project {
   return {
     id: String(row.id), userId: String(row.user_id), name: String(row.name),
-    slug: String(row.slug), icon: String(row.icon), logoUrl: optionalString(row.logo_url), category: String(row.category),
+    slug: String(row.slug), icon: String(row.icon), logoUrl: optionalString(row.logo_url),
+    displayOrder: Number(row.display_order), category: String(row.category),
     status: row.status === "paused" ? "paused" : "active", endpoint: String(row.endpoint),
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
   };
@@ -646,7 +691,8 @@ function toLiveSurface(row: JsonRecord): LiveSurface {
     ...(row.action && typeof row.action === "object"
       ? { action: row.action as unknown as LiveSurface["action"] }
       : {}),
-    version: Number(row.version), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    displayOrder: Number(row.display_order), version: Number(row.version),
+    createdAt: String(row.created_at), updatedAt: String(row.updated_at),
   };
 }
 

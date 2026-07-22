@@ -32,6 +32,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isMarkingAllRead = false
+    @Published private(set) var isCreatingDemo = false
     @Published var errorMessage: String?
     @Published var binding: BindingResponse?
     @Published var pendingEventID: String?
@@ -113,8 +114,15 @@ final class AppModel: ObservableObject {
                 inboxRequest,
                 deviceRequest
             )
-            projects = projectResponse.projects
-            liveSurfaces = surfaceResponse.surfaces
+            projects = projectResponse.projects.sorted(by: stableProjectOrder)
+            let projectOrders = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.displayOrder) })
+            liveSurfaces = surfaceResponse.surfaces.sorted { left, right in
+                let leftProjectOrder = projectOrders[left.projectId] ?? Int.max
+                let rightProjectOrder = projectOrders[right.projectId] ?? Int.max
+                if leftProjectOrder != rightProjectOrder { return leftProjectOrder < rightProjectOrder }
+                if left.displayOrder != right.displayOrder { return left.displayOrder < right.displayOrder }
+                return left.id < right.id
+            }
             events = inboxResponse.events
             devices = deviceResponse.devices
             errorMessage = nil
@@ -137,6 +145,7 @@ final class AppModel: ObservableObject {
             slug: overview.slug,
             icon: overview.icon,
             logoUrl: overview.logoUrl,
+            displayOrder: overview.displayOrder,
             category: overview.category,
             status: overview.status,
             endpoint: overview.endpoint,
@@ -161,6 +170,38 @@ final class AppModel: ObservableObject {
         projects.removeAll { $0.id == id }
         liveSurfaces.removeAll { $0.projectId == id }
         events.removeAll { $0.projectId == id }
+    }
+
+    private func stableProjectOrder(_ left: ProjectSummary, _ right: ProjectSummary) -> Bool {
+        if left.displayOrder != right.displayOrder { return left.displayOrder < right.displayOrder }
+        return left.id < right.id
+    }
+
+    @discardableResult
+    func deleteAccount() async -> Bool {
+        errorMessage = nil
+        do {
+            try await api.requestVoid("v1/account", method: .delete)
+            signOut()
+            return true
+        } catch {
+            errorMessage = friendlyMessage(error)
+            return false
+        }
+    }
+
+    func createDemoExperience() async {
+        guard !isCreatingDemo else { return }
+        isCreatingDemo = true
+        errorMessage = nil
+        defer { isCreatingDemo = false }
+        do {
+            try await api.requestVoid("v1/demo", method: .post)
+            await loadDashboard()
+            BellwireHaptics.success()
+        } catch {
+            errorMessage = friendlyMessage(error)
+        }
     }
 
     func markRead(id: String) async {
