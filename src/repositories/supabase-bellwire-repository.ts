@@ -145,6 +145,7 @@ export class SupabaseBellwireRepository implements BellwireRepository {
         p_installation_id: device.installationId,
         p_name: device.name,
         p_apns_token: device.apnsToken,
+        p_apns_environment: device.apnsEnvironment,
         p_app_version: device.appVersion ?? null,
         p_last_active_at: device.lastActiveAt,
         p_push_enabled: device.pushEnabled,
@@ -654,7 +655,9 @@ function toDevice(row: JsonRecord): Device {
   return {
     id: String(row.id), userId: String(row.user_id), installationId: String(row.installation_id),
     name: String(row.name), platform: "ios",
-    apnsToken: String(row.apns_token), appVersion: optionalString(row.app_version),
+    apnsToken: String(row.apns_token),
+    apnsEnvironment: row.apns_environment === "sandbox" ? "sandbox" : "production",
+    appVersion: optionalString(row.app_version),
     lastActiveAt: String(row.last_active_at), pushEnabled: row.push_enabled === true,
     createdAt: String(row.created_at),
   };

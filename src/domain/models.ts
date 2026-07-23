@@ -57,6 +57,7 @@ export interface Device {
   name: string;
   platform: "ios";
   apnsToken: string;
+  apnsEnvironment: "sandbox" | "production";
   appVersion?: string;
   lastActiveAt: string;
   pushEnabled: boolean;

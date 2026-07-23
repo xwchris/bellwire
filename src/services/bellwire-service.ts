@@ -228,12 +228,16 @@ export class BellwireService {
     const apnsToken = readNonEmptyString(body.apnsToken);
     const installationId = readNonEmptyString(body.installationId);
     const name = readNonEmptyString(body.name);
+    const apnsEnvironment = body.apnsEnvironment ?? "production";
     if (!name) throw invalidRequest("Device name is required");
     if (!apnsToken || !/^[A-Fa-f0-9]{32,256}$/u.test(apnsToken)) {
       throw invalidRequest("A valid APNs device token is required");
     }
     if (!installationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(installationId)) {
       throw invalidRequest("Installation ID must be a UUID");
+    }
+    if (apnsEnvironment !== "sandbox" && apnsEnvironment !== "production") {
+      throw invalidRequest("APNs environment must be sandbox or production");
     }
     const now = new Date().toISOString();
     return this.repository.saveDevice({
@@ -243,6 +247,7 @@ export class BellwireService {
       name,
       platform: "ios",
       apnsToken: apnsToken.toLowerCase(),
+      apnsEnvironment,
       appVersion: readNonEmptyString(body.appVersion),
       lastActiveAt: now,
       pushEnabled: body.pushEnabled !== false,

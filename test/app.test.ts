@@ -106,6 +106,7 @@ describe("Bellwire MVP API", () => {
       name: "Test iPhone",
       platform: "ios",
       apnsToken: "a".repeat(64),
+      apnsEnvironment: "sandbox",
       appVersion: "1.0",
       lastActiveAt: new Date().toISOString(),
       pushEnabled: true,
@@ -122,7 +123,7 @@ describe("Bellwire MVP API", () => {
       compatibility: {
         appVersion: "1.0.0",
         apiVersion: "v1",
-        schemaMigration: "202607230001",
+        schemaMigration: "202607230002",
       },
     });
   });
@@ -292,7 +293,8 @@ describe("Bellwire MVP API", () => {
       }),
     });
     expect(first.status).toBe(201);
-    const firstDevice = await first.json<{ id: string }>();
+    const firstDevice = await first.json<{ id: string; apnsEnvironment: string }>();
+    expect(firstDevice.apnsEnvironment).toBe("production");
 
     const rotated = await app.request("/v1/devices", {
       method: "POST",
@@ -300,15 +302,34 @@ describe("Bellwire MVP API", () => {
       body: JSON.stringify({
         name: "iPhone",
         apnsToken: "b".repeat(64),
+        apnsEnvironment: "sandbox",
         appVersion: "0.1.1",
         installationId,
       }),
     });
     expect(rotated.status).toBe(201);
-    const rotatedDevice = await rotated.json<{ id: string; apnsToken: string }>();
+    const rotatedDevice = await rotated.json<{
+      id: string;
+      apnsToken: string;
+      apnsEnvironment: string;
+    }>();
     expect(rotatedDevice.id).toBe(firstDevice.id);
     expect(rotatedDevice.apnsToken).toBe("b".repeat(64));
+    expect(rotatedDevice.apnsEnvironment).toBe("sandbox");
     expect(await repository.listDevices(userPrincipal.userId)).toHaveLength(1);
+
+    const invalidEnvironment = await app.request("/v1/devices", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "iPhone",
+        apnsToken: "c".repeat(64),
+        apnsEnvironment: "preview",
+        appVersion: "0.1.1",
+        installationId,
+      }),
+    });
+    expect(invalidEnvironment.status).toBe(400);
   });
 
   it("upserts a typed live Surface by stable key and exposes only the latest state", async () => {

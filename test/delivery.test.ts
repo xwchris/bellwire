@@ -10,7 +10,11 @@ import type {
 } from "../src/domain/models";
 import { InMemoryBellwireRepository } from "../src/repositories/in-memory-bellwire-repository";
 import { ApnsClient, ApnsError } from "../src/services/apns-client";
-import { DeliveryProcessor, type ApnsSender } from "../src/services/delivery-processor";
+import {
+  DeliveryProcessor,
+  type ApnsSender,
+  type ApnsSenderFactory,
+} from "../src/services/delivery-processor";
 import { renderNotification } from "../src/services/notification-renderer";
 
 const timestamp = "2026-07-20T10:00:00.000Z";
@@ -77,6 +81,7 @@ const device: Device = {
   name: "iPhone",
   platform: "ios",
   apnsToken: "a".repeat(64),
+  apnsEnvironment: "sandbox",
   appVersion: "1.0",
   lastActiveAt: timestamp,
   pushEnabled: true,
@@ -149,6 +154,17 @@ describe("notification delivery", () => {
 
     expect(factory).not.toHaveBeenCalled();
     expect(await repository.listDeliveries(event.id)).toEqual([]);
+  });
+
+  it("routes each device token to its registered APNs environment", async () => {
+    const repository = await seededRepository();
+    const send = vi.fn<ApnsSender["send"]>().mockResolvedValue({ providerMessageId: "apns-1" });
+    const factory = vi.fn<ApnsSenderFactory>().mockReturnValue({ send });
+
+    await new DeliveryProcessor(repository, factory).process(event.id);
+
+    expect(factory).toHaveBeenCalledWith("sandbox");
+    expect(send).toHaveBeenCalledWith(device.apnsToken, expect.any(Object));
   });
 
   it("does not fall back to an older enabled notification Surface", async () => {

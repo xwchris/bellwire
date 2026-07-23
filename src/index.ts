@@ -53,13 +53,13 @@ export default {
 
   async queue(batch: MessageBatch<DeliveryQueueMessage>, env: Env): Promise<void> {
     const repository = repositoryForEnv(env);
-    const processor = new DeliveryProcessor(repository, () => new ApnsClient({
+    const processor = new DeliveryProcessor(repository, (environment) => new ApnsClient({
       keyId: requiredEnv(env.APNS_KEY_ID, "APNS_KEY_ID"),
       teamId: requiredEnv(env.APNS_TEAM_ID, "APNS_TEAM_ID"),
       bundleId: requiredEnv(env.APNS_BUNDLE_ID, "APNS_BUNDLE_ID"),
       urlScheme: env.APP_URL_SCHEME ?? "bellwire",
       privateKey: requiredEnv(env.APNS_PRIVATE_KEY, "APNS_PRIVATE_KEY"),
-      environment: env.APNS_ENVIRONMENT ?? "sandbox",
+      environment,
     }));
     await Promise.all(
       batch.messages.map(async (message) => {

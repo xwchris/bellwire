@@ -171,7 +171,7 @@ final class AppModel: ObservableObject {
         ]
         devices = [
             DeviceRecord(
-                id: "iphone", name: "iPhone", platform: "ios", appVersion: "1.0",
+                id: "iphone", name: "iPhone", platform: "ios", apnsEnvironment: "sandbox", appVersion: "1.0",
                 lastActiveAt: now, pushEnabled: true
             )
         ]
@@ -471,10 +471,16 @@ final class AppModel: ObservableObject {
         struct Payload: Encodable {
             let name: String
             let apnsToken: String
+            let apnsEnvironment: String
             let appVersion: String
             let installationId: String
         }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+#if DEBUG
+        let environment = "sandbox"
+#else
+        let environment = "production"
+#endif
         do {
             let installationId = try keychain.installationID()
             let _: DeviceRecord = try await api.request(
@@ -483,6 +489,7 @@ final class AppModel: ObservableObject {
                 body: Payload(
                     name: UIDevice.current.name,
                     apnsToken: token,
+                    apnsEnvironment: environment,
                     appVersion: version,
                     installationId: installationId
                 )

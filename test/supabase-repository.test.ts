@@ -113,6 +113,7 @@ describe("SupabaseBellwireRepository", () => {
       name: "Updated iPhone",
       platform: "ios",
       apns_token: "a".repeat(64),
+      apns_environment: "sandbox",
       app_version: "1.1",
       last_active_at: "2026-07-20T12:00:00.000Z",
       push_enabled: true,
@@ -134,6 +135,7 @@ describe("SupabaseBellwireRepository", () => {
       name: "Updated iPhone",
       platform: "ios",
       apnsToken: "a".repeat(64),
+      apnsEnvironment: "sandbox",
       appVersion: "1.1",
       lastActiveAt: "2026-07-20T12:00:00.000Z",
       pushEnabled: true,
@@ -148,9 +150,14 @@ describe("SupabaseBellwireRepository", () => {
       p_user_id: input.userId,
       p_installation_id: input.installationId,
       p_apns_token: input.apnsToken,
+      p_apns_environment: input.apnsEnvironment,
       p_name: input.name,
     });
-    expect(saved).toMatchObject({ id: "stored-device-id", createdAt: storedRow.created_at });
+    expect(saved).toMatchObject({
+      id: "stored-device-id",
+      apnsEnvironment: "sandbox",
+      createdAt: storedRow.created_at,
+    });
     expect(request?.url).toContain("/rpc/register_device");
   });
 

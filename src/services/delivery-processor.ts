@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type {
   Delivery,
   Device,
@@ -13,6 +14,8 @@ export interface ApnsSender {
   send(deviceToken: string, notification: ApnsNotification): Promise<ApnsResult>;
 }
 
+export type ApnsSenderFactory = (environment: Device["apnsEnvironment"]) => ApnsSender;
+
 interface DeliveryConfiguration {
   project?: Project;
   schema?: EventSchema;
@@ -24,7 +27,7 @@ interface DeliveryConfiguration {
 export class DeliveryProcessor {
   constructor(
     private readonly repository: BellwireRepository,
-    private readonly apns: ApnsSender | (() => ApnsSender),
+    private readonly apns: ApnsSender | ApnsSenderFactory,
     private readonly now: () => Date = () => new Date(),
     private readonly leaseSeconds = 60,
   ) {}
@@ -79,7 +82,7 @@ export class DeliveryProcessor {
     const configuration = claims.length > 0
       ? await this.loadConfiguration(event.eventType, currentProject)
       : preflightConfiguration;
-    let sender: ApnsSender | undefined;
+    const senders = new Map<Device["apnsEnvironment"], ApnsSender>();
     for (const delivery of claims) {
       const device = configuration.devices.get(delivery.deviceId);
       const terminalReason = configuration.terminalReason ?? (
@@ -101,7 +104,9 @@ export class DeliveryProcessor {
       if (!activeProject || !schema || !surface || !device) {
         throw new Error("Delivery configuration invariant failed");
       }
-      sender ??= typeof this.apns === "function" ? this.apns() : this.apns;
+      const sender = typeof this.apns === "function"
+        ? senderForEnvironment(senders, device.apnsEnvironment, this.apns)
+        : this.apns;
       const eventSensitive = new Set(event.sensitiveFields ?? Object.keys(event.data));
       const fields = Object.fromEntries(
         Object.entries(schema.fields).map(([name, definition]) => [
@@ -172,6 +177,18 @@ export class DeliveryProcessor {
       ...(terminalReason ? { terminalReason } : {}),
     };
   }
+}
+
+function senderForEnvironment(
+  senders: Map<Device["apnsEnvironment"], ApnsSender>,
+  environment: Device["apnsEnvironment"],
+  factory: ApnsSenderFactory,
+): ApnsSender {
+  const existing = senders.get(environment);
+  if (existing) return existing;
+  const sender = factory(environment);
+  senders.set(environment, sender);
+  return sender;
 }
 
 function isPending(delivery: Delivery): boolean {
