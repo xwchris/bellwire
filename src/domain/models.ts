@@ -85,6 +85,15 @@ export interface AgentToken {
   revokedAt?: string;
 }
 
+export interface AgentConnection {
+  id: string;
+  name: string;
+  scopes: AgentScope[];
+  createdAt: string;
+  lastUsedAt?: string;
+  expiresAt?: string;
+}
+
 export interface EventSchema {
   id: string;
   projectId: string;

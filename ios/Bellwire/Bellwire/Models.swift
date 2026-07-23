@@ -338,6 +338,24 @@ struct DevicesResponse: Decodable {
     let devices: [DeviceRecord]
 }
 
+struct AgentConnectionRecord: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let scopes: [String]
+    let createdAt: String
+    let lastUsedAt: String?
+    let expiresAt: String?
+
+    var createdDate: Date? { ISO8601DateFormatter.bellwireDate(from: createdAt) }
+    var lastUsedDate: Date? {
+        lastUsedAt.flatMap { ISO8601DateFormatter.bellwireDate(from: $0) }
+    }
+}
+
+struct AgentConnectionsResponse: Decodable {
+    let connections: [AgentConnectionRecord]
+}
+
 struct BindingResponse: Decodable, Identifiable {
     let code: String
     let expiresAt: String

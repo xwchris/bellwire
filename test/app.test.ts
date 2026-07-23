@@ -570,7 +570,103 @@ describe("Bellwire MVP API", () => {
       `Bearer ${token.token}`,
     );
     expect(principal).toMatchObject({ kind: "agent", userId: userPrincipal.userId });
+
+    const connections = await app.request("/v1/agent-connections", {
+      headers: { authorization: "Bearer test" },
+    });
+    expect(connections.status).toBe(200);
+    const connectionBody = await connections.json<{
+      connections: Array<{ id: string; name: string; tokenHash?: string; token?: string }>;
+    }>();
+    expect(connectionBody.connections).toHaveLength(1);
+    expect(connectionBody.connections[0]).toMatchObject({ name: "Codex on Mac" });
+    expect(connectionBody.connections[0]).not.toHaveProperty("token");
+    expect(connectionBody.connections[0]).not.toHaveProperty("tokenHash");
+
+    const revoke = await app.request(
+      `/v1/agent-connections/${connectionBody.connections[0]?.id}`,
+      { method: "DELETE", headers: { authorization: "Bearer test" } },
+    );
+    expect(revoke.status).toBe(204);
+    await expect(new PrincipalAuthenticator(repository, {}).authenticate(
+      `Bearer ${token.token}`,
+    )).rejects.toMatchObject({ status: 401 });
+    expect(await (await app.request("/v1/agent-connections", {
+      headers: { authorization: "Bearer test" },
+    })).json()).toEqual({ connections: [] });
     expect((await confirm()).status).toBe(400);
+  });
+
+  it("does not let an Agent enumerate, revoke, or create Agent connections", async () => {
+    const agentApp = createApp({
+      service: new BellwireService(repository, dispatcher),
+      authenticator: new StaticAuthenticator({
+        ...userPrincipal,
+        kind: "agent",
+        tokenId: "agent-token",
+      }),
+    });
+
+    expect((await agentApp.request("/v1/agent-connections", {
+      headers: { authorization: "Bearer agent" },
+    })).status).toBe(403);
+    expect((await agentApp.request("/v1/agent-connections/agent-token", {
+      method: "DELETE",
+      headers: { authorization: "Bearer agent" },
+    })).status).toBe(403);
+    expect((await agentApp.request("/v1/device-bindings", {
+      method: "POST",
+      headers: { authorization: "Bearer agent" },
+    })).status).toBe(403);
+  });
+
+  it("reports delivery health from the last 24 hours instead of all history", async () => {
+    const projectId = await createProject();
+    await repository.createEventIfAbsent({
+      id: "health-event",
+      projectId,
+      eventType: "health.check",
+      idempotencyKey: "health-event",
+      data: {},
+      sensitiveFields: [],
+      occurredAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      status: "accepted",
+    });
+    const oldTimestamp = new Date(Date.now() - 48 * 60 * 60 * 1_000).toISOString();
+    await repository.createDeliveryIfAbsent({
+      id: "old-failure",
+      eventId: "health-event",
+      deviceId: "device-old",
+      channel: "apns",
+      status: "failed",
+      attemptCount: 3,
+      queuedAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+    });
+    const recentTimestamp = new Date().toISOString();
+    await repository.createDeliveryIfAbsent({
+      id: "recent-accepted",
+      eventId: "health-event",
+      deviceId: "device-current",
+      channel: "apns",
+      status: "accepted_by_apns",
+      attemptCount: 1,
+      queuedAt: recentTimestamp,
+      sentAt: recentTimestamp,
+      updatedAt: recentTimestamp,
+    });
+
+    const response = await app.request(`/v1/projects/${projectId}/delivery-health`, {
+      headers: { authorization: "Bearer test" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      queued: 0,
+      accepted: 1,
+      failed: 0,
+      status: "healthy",
+    });
   });
 
   it("atomically exchanges a pairing code only once under concurrent confirmation", async () => {

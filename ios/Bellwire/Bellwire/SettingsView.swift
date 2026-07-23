@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var showsFeedbackMail = false
     @State private var showsFeedbackFallback = false
     @State private var feedbackEmailCopied = false
+    @State private var pendingAgentRevocation: AgentConnectionRecord?
     @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.system.rawValue
     @AppStorage(AppAppearance.storageKey) private var appAppearance = AppAppearance.system.rawValue
 
@@ -90,6 +91,16 @@ struct SettingsView: View {
             } message: {
                 Text("Your local session will be removed. Connected projects and server data are not deleted.")
             }
+            .alert(item: $pendingAgentRevocation) { connection in
+                Alert(
+                    title: Text("Disconnect Agent?"),
+                    message: Text("“\(connection.name)” will immediately lose access to Bellwire. Your projects and data will remain."),
+                    primaryButton: .destructive(Text("Disconnect")) {
+                        Task { await model.revokeAgentConnection(id: connection.id) }
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
             .navigationDestination(isPresented: $showsDeleteAccountPage) {
                 DeleteAccountView()
             }
@@ -129,7 +140,10 @@ struct SettingsView: View {
 
     private var connectionSection: some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
-            SectionHeaderView(title: "Agent connection")
+            SectionHeaderView(
+                title: "Agent connection",
+                hint: model.agentConnections.isEmpty ? nil : "\(model.agentConnections.count)"
+            )
             VStack(spacing: 0) {
                 Button {
                     isGeneratingBinding = true
@@ -170,6 +184,29 @@ struct SettingsView: View {
             }
             .padding(.horizontal, BellwireSpacing.standard)
             .bellwireSurface()
+
+            if !model.agentConnections.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.agentConnections.enumerated()), id: \.element.id) {
+                        index,
+                        connection in
+                        AgentConnectionRowView(
+                            connection: connection,
+                            isRevoking: model.revokingAgentConnectionID == connection.id
+                        ) {
+                            pendingAgentRevocation = connection
+                        }
+                        if index < model.agentConnections.count - 1 {
+                            Divider()
+                                .overlay(BellwireTheme.separator)
+                                .padding(.leading, 44)
+                        }
+                    }
+                }
+                .padding(.horizontal, BellwireSpacing.standard)
+                .bellwireSurface(elevated: false)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 
@@ -502,6 +539,82 @@ struct SettingsView: View {
     private func openSupport() {
         guard let url = URL(string: "https://bellwire.app/support") else { return }
         openURL(url)
+    }
+}
+
+private struct AgentConnectionRowView: View {
+    @Environment(\.locale) private var locale
+    let connection: AgentConnectionRecord
+    let isRevoking: Bool
+    let disconnect: () -> Void
+
+    var body: some View {
+        HStack(spacing: BellwireSpacing.small) {
+            Image(systemName: "terminal")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(BellwireTheme.secondaryInk)
+                .frame(width: 32, height: 32)
+                .background(
+                    BellwireTheme.raisedSurface,
+                    in: RoundedRectangle(
+                        cornerRadius: BellwireRadius.small,
+                        style: .continuous
+                    )
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(connection.name)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(BellwireTheme.ink)
+                    .lineLimit(1)
+                activityLabel
+                    .font(.caption)
+                    .foregroundStyle(BellwireTheme.mutedInk)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            StatusBadgeView(
+                text: "Active",
+                color: BellwireTheme.success,
+                showsDot: true
+            )
+
+            Button(role: .destructive, action: disconnect) {
+                Group {
+                    if isRevoking {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(BellwireTheme.danger)
+                    } else {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .foregroundStyle(BellwireTheme.danger)
+                .background(
+                    BellwireTheme.danger.opacity(0.08),
+                    in: Circle()
+                )
+            }
+            .buttonStyle(PressableButtonStyle())
+            .disabled(isRevoking)
+            .accessibilityLabel(Text("Disconnect \(connection.name)"))
+            .accessibilityHint("Revokes this Agent’s Bellwire access")
+        }
+        .padding(.vertical, BellwireSpacing.compact)
+    }
+
+    @ViewBuilder
+    private var activityLabel: some View {
+        if let date = connection.lastUsedDate {
+            Text("Last used") + Text(" \(BellwireDateFormatting.relative(date, locale: locale))")
+        } else if let date = connection.createdDate {
+            Text("Connected") + Text(" \(BellwireDateFormatting.relative(date, locale: locale))")
+        } else {
+            Text("Connected")
+        }
     }
 }
 

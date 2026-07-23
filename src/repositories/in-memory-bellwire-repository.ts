@@ -193,6 +193,13 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     return copy(token);
   }
 
+  async listAgentTokens(userId: string): Promise<AgentToken[]> {
+    return [...this.agentTokens.values()]
+      .filter((token) => token.userId === userId && !token.revokedAt)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(copy);
+  }
+
   async findAgentTokenByHash(tokenHash: string): Promise<AgentToken | undefined> {
     const now = Date.now();
     const token = [...this.agentTokens.values()].find(
@@ -207,6 +214,13 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   async markAgentTokenUsed(tokenId: string, usedAt: string): Promise<void> {
     const token = this.agentTokens.get(tokenId);
     if (token) this.agentTokens.set(tokenId, { ...token, lastUsedAt: usedAt });
+  }
+
+  async revokeAgentToken(tokenId: string, userId: string, revokedAt: string): Promise<void> {
+    const token = this.agentTokens.get(tokenId);
+    if (token?.userId === userId) {
+      this.agentTokens.set(tokenId, { ...token, revokedAt });
+    }
   }
 
   async saveEventSchema(schema: EventSchema): Promise<EventSchema> {
@@ -486,11 +500,13 @@ export class InMemoryBellwireRepository implements BellwireRepository {
       .map(copy);
   }
 
-  async getDeliveryHealth(projectId: string): Promise<DeliveryHealth> {
+  async getDeliveryHealth(projectId: string, since: string): Promise<DeliveryHealth> {
     const eventIds = new Set(
       [...this.events.values()].filter((event) => event.projectId === projectId).map((event) => event.id),
     );
-    const deliveries = [...this.deliveries.values()].filter((item) => eventIds.has(item.eventId));
+    const deliveries = [...this.deliveries.values()].filter(
+      (item) => eventIds.has(item.eventId) && item.updatedAt >= since,
+    );
     const queued = deliveries.filter((item) => item.status === "queued").length;
     const accepted = deliveries.filter((item) => item.status === "accepted_by_apns").length;
     const failed = deliveries.filter((item) => item.status === "failed").length;

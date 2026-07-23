@@ -36,6 +36,20 @@ export function createApp(dependencies: {
     ),
   );
 
+  app.get("/v1/agent-connections", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    return context.json(await dependencies.service.listAgentConnections(principal));
+  });
+
+  app.delete("/v1/agent-connections/:connectionId", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    await dependencies.service.revokeAgentConnection(
+      principal,
+      context.req.param("connectionId"),
+    );
+    return context.body(null, 204);
+  });
+
   app.post("/v1/devices", async (context) => {
     const principal = await authenticate(context, dependencies.authenticator);
     return context.json(

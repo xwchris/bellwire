@@ -331,6 +331,50 @@ describe("SupabaseBellwireRepository", () => {
     expect(claimed).toMatchObject({ id: "token-id", userId: "user-id" });
   });
 
+  it("lists active Agent connections and revokes one within its owning user", async () => {
+    const requests: Request[] = [];
+    const storedRow = {
+      id: "token-id",
+      user_id: "user-id",
+      name: "Codex on Mac",
+      token_hash: "a".repeat(64),
+      scopes: ["project:read"],
+      created_at: "2026-07-21T01:00:00.000Z",
+      last_used_at: "2026-07-22T01:00:00.000Z",
+      expires_at: null,
+      revoked_at: null,
+    };
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return request.method === "GET"
+          ? Response.json([storedRow])
+          : new Response(null, { status: 204 });
+      },
+    );
+
+    expect(await repository.listAgentTokens("user-id")).toMatchObject([
+      { id: "token-id", userId: "user-id", name: "Codex on Mac" },
+    ]);
+    await repository.revokeAgentToken(
+      "token-id",
+      "user-id",
+      "2026-07-23T01:00:00.000Z",
+    );
+
+    expect(requests[0]?.url).toContain("user_id=eq.user-id");
+    expect(requests[0]?.url).toContain("revoked_at=is.null");
+    expect(requests[1]?.method).toBe("PATCH");
+    expect(requests[1]?.url).toContain("id=eq.token-id");
+    expect(requests[1]?.url).toContain("user_id=eq.user-id");
+    expect(await requests[1]?.json()).toEqual({
+      revoked_at: "2026-07-23T01:00:00.000Z",
+    });
+  });
+
   it("fetches the latest notification Surface before evaluating enabled", async () => {
     let request: Request | undefined;
     const repository = new SupabaseBellwireRepository(
@@ -484,5 +528,27 @@ describe("SupabaseBellwireRepository", () => {
       p_failed_at: "2026-07-21T01:00:01.000Z",
       p_error_message: "Queue unavailable",
     });
+  });
+
+  it("limits delivery health to records updated inside the requested window", async () => {
+    let request: Request | undefined;
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        request = new Request(input, init);
+        return Response.json([{ status: "accepted_by_apns" }]);
+      },
+    );
+    const health = await repository.getDeliveryHealth(
+      "project-id",
+      "2026-07-22T01:00:00.000Z",
+    );
+
+    expect(health).toEqual({ queued: 0, accepted: 1, failed: 0, status: "healthy" });
+    expect(request?.url).toContain("events.project_id=eq.project-id");
+    expect(request?.url).toContain(
+      "updated_at=gte.2026-07-22T01%3A00%3A00.000Z",
+    );
   });
 });
