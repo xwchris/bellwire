@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import UIKit
 import UserNotifications
 
@@ -46,16 +47,20 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound, .badge]
+        await MainActor.run { [weak self] in
+            self?.model?.handleRemoteNotification()
+        }
+        return [.banner, .list, .sound, .badge]
     }
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        guard let deepLink = response.notification.request.content.userInfo["deepLink"] as? String,
-              let url = URL(string: deepLink)
-        else { return }
-        await MainActor.run { [weak self] in self?.model?.handleDeepLink(url) }
+        let url = (response.notification.request.content.userInfo["deepLink"] as? String)
+            .flatMap(URL.init(string:))
+        await MainActor.run { [weak self] in
+            self?.model?.handleRemoteNotification(deepLink: url)
+        }
     }
 }

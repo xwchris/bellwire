@@ -34,6 +34,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isMarkingAllRead = false
     @Published private(set) var isCreatingDemo = false
+    @Published private(set) var lastDashboardRefreshAt: Date?
     @Published var errorMessage: String?
     @Published var binding: BindingResponse?
     @Published var pendingEventID: String?
@@ -41,6 +42,9 @@ final class AppModel: ObservableObject {
     private let keychain = KeychainStore()
     private var currentNonce: String?
     private var apnsToken: String?
+    private var dashboardLoadTask: Task<Void, Never>?
+    private var dashboardLoadID: UUID?
+    private var sessionRefreshTask: Task<AuthSession, Error>?
 
     lazy var api = APIClient { [weak self] in
         guard let self else { throw ClientError.signedOut }
@@ -81,10 +85,24 @@ final class AppModel: ObservableObject {
 #endif
         await refreshNotificationStatus()
         guard isAuthenticated else { return }
-        if notificationPermission == .authorized {
+        if notificationPermission == .authorized, apnsToken == nil {
             UIApplication.shared.registerForRemoteNotifications()
         }
         await loadDashboard(showLoading: true)
+    }
+
+    func handleBecameActive() async {
+#if DEBUG
+        if Self.screenshotMode != nil { return }
+#endif
+        await refreshNotificationStatus()
+        guard isAuthenticated else { return }
+        if notificationPermission == .authorized, apnsToken == nil {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+        if lastDashboardRefreshAt.map({ Date().timeIntervalSince($0) > 10 }) ?? true {
+            await loadDashboard()
+        }
     }
 
 #if DEBUG
@@ -202,8 +220,28 @@ final class AppModel: ObservableObject {
     }
 
     func loadDashboard(showLoading: Bool = false) async {
+        if let dashboardLoadTask {
+            await dashboardLoadTask.value
+            return
+        }
         if showLoading { isLoading = true }
-        defer { if showLoading { isLoading = false } }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performDashboardLoad()
+        }
+        let loadID = UUID()
+        dashboardLoadTask = task
+        dashboardLoadID = loadID
+        await task.value
+        if dashboardLoadID == loadID {
+            dashboardLoadTask = nil
+            dashboardLoadID = nil
+            if showLoading { isLoading = false }
+        }
+    }
+
+    private func performDashboardLoad() async {
+        guard let userID = session?.user.id else { return }
         do {
             async let projectRequest: ProjectsResponse = api.request("v1/projects")
             async let surfaceRequest: LiveSurfacesResponse = api.request("v1/surfaces")
@@ -215,19 +253,24 @@ final class AppModel: ObservableObject {
                 inboxRequest,
                 deviceRequest
             )
-            projects = projectResponse.projects.sorted(by: stableProjectOrder)
-            let projectOrders = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.displayOrder) })
-            liveSurfaces = surfaceResponse.surfaces.sorted { left, right in
+            guard !Task.isCancelled, session?.user.id == userID else { return }
+            let orderedProjects = projectResponse.projects.sorted(by: stableProjectOrder)
+            let projectOrders = Dictionary(uniqueKeysWithValues: orderedProjects.map { ($0.id, $0.displayOrder) })
+            let orderedSurfaces = surfaceResponse.surfaces.sorted { left, right in
                 let leftProjectOrder = projectOrders[left.projectId] ?? Int.max
                 let rightProjectOrder = projectOrders[right.projectId] ?? Int.max
                 if leftProjectOrder != rightProjectOrder { return leftProjectOrder < rightProjectOrder }
                 if left.displayOrder != right.displayOrder { return left.displayOrder < right.displayOrder }
                 return left.id < right.id
             }
+            projects = orderedProjects
+            liveSurfaces = orderedSurfaces
             events = inboxResponse.events
             devices = deviceResponse.devices
+            lastDashboardRefreshAt = Date()
             errorMessage = nil
         } catch {
+            guard !Task.isCancelled else { return }
             errorMessage = friendlyMessage(error)
         }
     }
@@ -398,7 +441,20 @@ final class AppModel: ObservableObject {
         if let id, !id.isEmpty { pendingEventID = id }
     }
 
+    func handleRemoteNotification(deepLink: URL? = nil) {
+        if let deepLink { handleDeepLink(deepLink) }
+        guard isAuthenticated else { return }
+        Task { @MainActor [weak self] in
+            await self?.loadDashboard()
+        }
+    }
+
     func signOut() {
+        dashboardLoadTask?.cancel()
+        sessionRefreshTask?.cancel()
+        dashboardLoadTask = nil
+        dashboardLoadID = nil
+        sessionRefreshTask = nil
         keychain.delete()
         session = nil
         projects = []
@@ -407,6 +463,8 @@ final class AppModel: ObservableObject {
         devices = []
         binding = nil
         pendingEventID = nil
+        lastDashboardRefreshAt = nil
+        isLoading = false
     }
 
     private func registerDevice(_ token: String) async {
@@ -437,12 +495,26 @@ final class AppModel: ObservableObject {
     }
 
     private func validAccessToken() async throws -> String {
-        guard var current = session else { throw ClientError.signedOut }
-        if current.needsRefresh {
-            current = try await api.refreshSession(current.refreshToken)
-            try saveSession(current)
+        guard let current = session else { throw ClientError.signedOut }
+        guard current.needsRefresh else { return current.accessToken }
+        if let sessionRefreshTask {
+            return try await sessionRefreshTask.value.accessToken
         }
-        return current.accessToken
+
+        let refreshToken = current.refreshToken
+        let client = api
+        let task = Task { try await client.refreshSession(refreshToken) }
+        sessionRefreshTask = task
+        do {
+            let refreshed = try await task.value
+            sessionRefreshTask = nil
+            guard session?.refreshToken == refreshToken else { throw ClientError.signedOut }
+            try saveSession(refreshed)
+            return refreshed.accessToken
+        } catch {
+            sessionRefreshTask = nil
+            throw error
+        }
     }
 
     private func saveSession(_ value: AuthSession) throws {

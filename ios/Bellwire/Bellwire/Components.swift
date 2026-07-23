@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import SwiftUI
 import UIKit
 
@@ -53,10 +54,10 @@ struct ProjectAvatarView: View {
                         image
                             .resizable()
                             .scaledToFill()
+                            .background(BellwireTheme.surface)
                             .transition(.opacity)
                     }
                 }
-                .background(BellwireTheme.surface)
                 .frame(width: size, height: size)
                 .clipped()
             }
