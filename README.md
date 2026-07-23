@@ -1,10 +1,28 @@
-# Bellwire
+<div align="center">
+  <img src="ios/Bellwire/Bellwire/Assets.xcassets/AppIcon.appiconset/BellwireIcon.png" width="104" alt="Bellwire app icon">
+  <h1>Bellwire</h1>
+  <p>Live project state and AI agent events, delivered as native cards and notifications on iPhone.</p>
+  <p>
+    <a href="https://bellwire.app">Website</a> ·
+    <a href="docs/quickstart.md">Quick Start</a> ·
+    <a href="docs/self-hosting.md">Self-host</a> ·
+    <a href="https://clawhub.ai/xwchris/skills/bellwire">ClawHub</a> ·
+    <a href="https://github.com/xwchris/bellwire/releases/latest">Release</a>
+  </p>
+  <p>
+    <a href="https://github.com/xwchris/bellwire/actions/workflows/ci.yml"><img src="https://github.com/xwchris/bellwire/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/xwchris/bellwire/releases/latest"><img src="https://img.shields.io/github/v/release/xwchris/bellwire?display_name=tag&amp;sort=semver" alt="Latest release"></a>
+    <img src="https://img.shields.io/badge/iOS-17%2B-111111?logo=apple" alt="iOS 17 or newer">
+    <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-multi--license-4c6fff" alt="Multi-license"></a>
+  </p>
+</div>
 
 Bellwire turns live project state and typed events into native iPhone cards, a
 private inbox, and APNs notifications. It includes a Cloudflare Worker API,
 durable Supabase storage and authentication, a native SwiftUI app, and an
-installable Agent skill for connecting other repositories.
+installable Agent Skill for connecting other repositories.
 
+Use [Bellwire Cloud](https://bellwire.app) or connect a self-hosted deployment.
 The hosted API is available at
 [`https://api.bellwire.app`](https://api.bellwire.app).
 Product requirements and internal planning documents are intentionally kept
@@ -19,6 +37,14 @@ out of this public repository.
 Start with the [five-minute hosted quick start](docs/quickstart.md), browse the
 [integration examples](examples/README.md), or deploy the full stack with the
 [self-hosting guide](docs/self-hosting.md).
+
+## See Bellwire in action
+
+<p align="center">
+  <img src="app-store/screenshots/en-US/home.png" width="30%" alt="Bellwire home screen with live project cards">
+  <img src="app-store/screenshots/en-US/projects.png" width="30%" alt="Bellwire project management screen">
+  <img src="app-store/screenshots/en-US/events.png" width="30%" alt="Bellwire event inbox">
+</p>
 
 ## Choose a deployment
 
@@ -37,7 +63,13 @@ path.
 
 ## Install the Agent Skill
 
-Clone Bellwire and link the bundled Skill into Codex:
+Install the published Skill from ClawHub:
+
+```bash
+clawhub install @xwchris/bellwire
+```
+
+Or clone Bellwire and link the bundled Skill into Codex:
 
 ```bash
 git clone https://github.com/xwchris/bellwire.git
@@ -47,7 +79,8 @@ ln -s "$(pwd)/bellwire/skills/bellwire" "$HOME/.codex/skills/bellwire"
 
 Restart Codex, create a binding code in the iOS app, and ask Codex to use the
 Bellwire Skill for the current repository. See the
-[Skill installation guide](skills/bellwire/README.md) and
+[ClawHub listing](https://clawhub.ai/xwchris/skills/bellwire),
+[Skill installation guide](skills/bellwire/README.md), and
 [hosted quick start](docs/quickstart.md) for the complete flow.
 
 ## What is implemented
