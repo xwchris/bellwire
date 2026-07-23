@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 create extension if not exists pgcrypto with schema extensions;
 
 create table public.profiles (

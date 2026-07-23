@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 alter table public.projects
   add column if not exists logo_url text;
 

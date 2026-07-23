@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-only
 
 const supabaseURL = process.env.SUPABASE_URL ?? "https://cvyidqbjjkfzoxykkbea.supabase.co";
 const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY

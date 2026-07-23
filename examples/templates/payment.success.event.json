@@ -1,0 +1,11 @@
+{
+  "type": "payment.success",
+  "data": {
+    "orderId": "ord_example_123",
+    "amount": 28,
+    "currency": "CNY",
+    "product": "Example Pro",
+    "customerReference": "synthetic-customer"
+  },
+  "occurredAt": "2026-07-22T12:00:00Z"
+}

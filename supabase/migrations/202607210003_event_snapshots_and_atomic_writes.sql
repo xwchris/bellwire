@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 alter table public.events
 add column sensitive_fields text[];
 

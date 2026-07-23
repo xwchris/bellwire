@@ -10,6 +10,46 @@ The hosted API is available at
 Product requirements and internal planning documents are intentionally kept
 out of this public repository.
 
+> [!IMPORTANT]
+> Bellwire is multi-licensed: the Worker and Supabase stack use AGPL-3.0-only,
+> the iOS app uses MPL-2.0, and the Skill, CLI, protocol references, examples,
+> and public docs use Apache-2.0. The Bellwire brand is reserved. See
+> [LICENSE.md](LICENSE.md) for the exact path boundaries.
+
+Start with the [five-minute hosted quick start](docs/quickstart.md), browse the
+[integration examples](examples/README.md), or deploy the full stack with the
+[self-hosting guide](docs/self-hosting.md).
+
+## Choose a deployment
+
+| | Bellwire Cloud | Self-hosted |
+| --- | --- | --- |
+| iOS build | Official signed build | Compile and sign your own fork |
+| API and Queue | Operated by Bellwire | Your Cloudflare account |
+| Auth and database | Operated by Bellwire | Your Supabase project |
+| Push credentials | Bellwire App ID and APNs key | Your App ID and APNs key |
+| Source code edits | None | None; use ignored local configuration |
+| Operations | Managed service | You own upgrades, cost, security, and uptime |
+
+Both paths use the same Event, Surface, Agent, and delivery contracts. Bellwire
+Cloud is the convenience product; self-hosting is the control and auditability
+path.
+
+## Install the Agent Skill
+
+Clone Bellwire and link the bundled Skill into Codex:
+
+```bash
+git clone https://github.com/xwchris/bellwire.git
+mkdir -p "$HOME/.codex/skills"
+ln -s "$(pwd)/bellwire/skills/bellwire" "$HOME/.codex/skills/bellwire"
+```
+
+Restart Codex, create a binding code in the iOS app, and ask Codex to use the
+Bellwire Skill for the current repository. See the
+[Skill installation guide](skills/bellwire/README.md) and
+[hosted quick start](docs/quickstart.md) for the complete flow.
+
 ## What is implemented
 
 - Supabase-backed projects, devices, schemas, notification surfaces, tokens,
@@ -44,6 +84,9 @@ Events remain durable if Queue submission is temporarily unavailable. For a
 registered device, the API records `retryable:QueueUnavailable` as degraded
 delivery health instead of returning a misleading storage failure.
 
+Architecture decisions are recorded in [`docs/architecture`](docs/architecture).
+Release history is recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Local development
 
 Requires Node.js 20 or newer.
@@ -62,14 +105,6 @@ npm run lint
 npm run typecheck
 npm run build
 npm run ios:build
-```
-
-The marketing website lives in [`website`](website) as an isolated Vite app,
-so its dependencies and build output do not affect the Worker bundle:
-
-```bash
-npm run web:dev
-npm run web:build
 ```
 
 The Worker uses in-memory storage only when `APP_ENV=development` and no
@@ -93,12 +128,16 @@ development-signed app and switch both the Worker environment and device build
 to production together. Never commit service-role, Agent, Ingest, or APNs
 private keys.
 
-Verify an APNs key, Team ID, bundle topic, and environment without sending to a
-real device. A successful credential check returns the expected
-`BadDeviceToken` response for the synthetic token:
+Verify an APNs key locally without persisting or printing it. Add `-- --online`
+to let APNs validate the provider token, bundle topic, and environment with a
+synthetic device token that cannot receive a notification:
 
 ```bash
-node scripts/verify-apns.mjs /secure/path/AuthKey_KEYID.p8 KEYID TEAMID app.bellwire sandbox
+APNS_KEY_ID=ABC123DEFG \
+APNS_TEAM_ID=ABC123DEFG \
+APNS_BUNDLE_ID=app.bellwire \
+APNS_ENVIRONMENT=sandbox \
+  npm run self-host:apns-preflight < /secure/path/AuthKey_ABC123DEFG.p8
 ```
 
 Apply database migrations from [`supabase/migrations`](supabase/migrations) to
@@ -120,6 +159,11 @@ An unsigned Simulator build is reproducible with `npm run ios:build`. A signed
 device build additionally requires an Apple Developer account in Xcode, an App
 ID/provisioning profile for the bundle ID, and the matching APNs key configured
 on the Worker.
+
+For a complete deployment using your own Apple, Supabase, and Cloudflare
+accounts, follow the [self-hosting guide](docs/self-hosting.md). Self-hosted iOS
+settings are supplied through an ignored `Local.xcconfig`; no Swift source edit
+is required.
 
 ## API surface
 
@@ -188,3 +232,8 @@ printed:
 ```bash
 pbpaste | npm run test:live
 ```
+
+For self-hosted deployments, override `BELLWIRE_API_URL`, `SUPABASE_URL`, and
+`SUPABASE_PUBLISHABLE_KEY`. The [self-hosting guide](docs/self-hosting.md) also
+covers configuration diagnosis, APNs credential preflight, and the physical
+device acceptance checklist.

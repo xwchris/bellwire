@@ -1,0 +1,35 @@
+name: Bellwire deployment failure example
+
+on:
+  workflow_dispatch:
+
+jobs:
+  example:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run deployment
+        id: deploy
+        run: exit 1
+      - name: Notify Bellwire after failure
+        if: failure()
+        env:
+          BELLWIRE_INGEST_TOKEN: ${{ secrets.BELLWIRE_INGEST_TOKEN }}
+          BELLWIRE_PROJECT_ID: ${{ vars.BELLWIRE_PROJECT_ID }}
+          BELLWIRE_API_URL: ${{ vars.BELLWIRE_API_URL || 'https://api.bellwire.app' }}
+          BELLWIRE_IDEMPOTENCY_KEY: deployment-${{ github.run_id }}-${{ github.run_attempt }}-failed
+        run: |
+          payload="$(jq -cn \
+            --arg revision "${GITHUB_SHA}" \
+            --arg runURL "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{
+              type: "deployment.failed",
+              data: { environment: "Production", revision: $revision, runURL: $runURL },
+              occurredAt: (now | todateiso8601)
+            }')"
+          curl --fail-with-body --silent --show-error --max-time 5 \
+            --request POST \
+            --header "Authorization: Bearer ${BELLWIRE_INGEST_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --header "Idempotency-Key: ${BELLWIRE_IDEMPOTENCY_KEY}" \
+            --data "${payload}" \
+            "${BELLWIRE_API_URL%/}/v1/events/${BELLWIRE_PROJECT_ID}"
