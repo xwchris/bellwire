@@ -11,7 +11,7 @@ does not use Bellwire Cloud, its Apple signing identity, or its APNs credentials
 - An APNs token signing key (`.p8`), Key ID, and Team ID.
 - A Supabase project for authentication and PostgreSQL storage.
 - A Cloudflare account with Workers and Queues.
-- Node.js 20 or newer, Wrangler, Supabase CLI, and Xcode.
+- Node.js 22 or newer, Wrangler, Supabase CLI, and Xcode.
 
 Cloudflare alone is not sufficient. The current server stores durable state and
 authenticates users through Supabase, while APNs only accepts notifications

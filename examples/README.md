@@ -28,7 +28,7 @@ The token is shown only once.
 
 ## Choose an adapter
 
-- [Node.js](node/send-event.mjs): dependency-free Node 20 script that reads a
+- [Node.js](node/send-event.mjs): dependency-free Node 22 script that reads a
   JSON Event file.
 - [Shell](shell/send-event.sh): curl adapter suitable for deployment scripts.
 - [Cloudflare Worker](cloudflare-worker/bellwire.ts): reusable function with a

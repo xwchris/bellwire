@@ -16,7 +16,7 @@ documentation improvements, and small reviewable pull requests.
 
 ## Local checks
 
-Use Node.js 20 or newer, then run:
+Use Node.js 22 or newer, then run:
 
 ```bash
 npm ci

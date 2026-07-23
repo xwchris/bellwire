@@ -7,39 +7,59 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("iOS Inbox preview", () => {
-  it("excludes server-declared sensitive fields and decodes legacy responses", () => {
-    const temporaryDirectory = mkdtempSync(join(tmpdir(), "bellwire-ios-preview-"));
-    const executable = join(temporaryDirectory, "InboxPreviewCheck");
-    try {
-      execFileSync("xcrun", [
-        "swiftc",
-        "ios/Bellwire/Bellwire/Models.swift",
-        "test/InboxPreviewCheck.swift",
-        "-o",
-        executable,
-      ], { stdio: "pipe" });
-      expect(() => execFileSync(executable, { stdio: "pipe" })).not.toThrow();
-    } finally {
-      rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
+  it(
+    "excludes server-declared sensitive fields and decodes legacy responses",
+    () => {
+      const temporaryDirectory = mkdtempSync(
+        join(tmpdir(), "bellwire-ios-preview-"),
+      );
+      const executable = join(temporaryDirectory, "InboxPreviewCheck");
+      try {
+        execFileSync(
+          "xcrun",
+          [
+            "swiftc",
+            "ios/Bellwire/Bellwire/Models.swift",
+            "test/InboxPreviewCheck.swift",
+            "-o",
+            executable,
+          ],
+          { stdio: "pipe" },
+        );
+        expect(() => execFileSync(executable, { stdio: "pipe" })).not.toThrow();
+      } finally {
+        rmSync(temporaryDirectory, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 
-  it("formats dates using the in-app language instead of the system locale", () => {
-    const temporaryDirectory = mkdtempSync(join(tmpdir(), "bellwire-ios-locale-"));
-    const executable = join(temporaryDirectory, "LocalizationCheck");
-    try {
-      execFileSync("xcrun", [
-        "swiftc",
-        "ios/Bellwire/Bellwire/Localization.swift",
-        "test/LocalizationCheck.swift",
-        "-o",
-        executable,
-      ], { stdio: "pipe" });
-      expect(() => execFileSync(executable, { stdio: "pipe" })).not.toThrow();
-    } finally {
-      rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
+  it(
+    "formats dates using the in-app language instead of the system locale",
+    () => {
+      const temporaryDirectory = mkdtempSync(
+        join(tmpdir(), "bellwire-ios-locale-"),
+      );
+      const executable = join(temporaryDirectory, "LocalizationCheck");
+      try {
+        execFileSync(
+          "xcrun",
+          [
+            "swiftc",
+            "ios/Bellwire/Bellwire/Localization.swift",
+            "test/LocalizationCheck.swift",
+            "-o",
+            executable,
+          ],
+          { stdio: "pipe" },
+        );
+        expect(() => execFileSync(executable, { stdio: "pipe" })).not.toThrow();
+      } finally {
+        rmSync(temporaryDirectory, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 
   it("refreshes current data from lifecycle and notification signals", () => {
     const app = readFileSync("ios/Bellwire/Bellwire/BellwireApp.swift", "utf8");
