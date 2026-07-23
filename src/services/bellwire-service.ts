@@ -800,8 +800,22 @@ function sameLiveSurface(
   return existing.type === next.type
     && existing.title === next.title
     && existing.subtitle === next.subtitle
-    && JSON.stringify(existing.content) === JSON.stringify(next.content)
-    && JSON.stringify(existing.action) === JSON.stringify(next.action);
+    && stableJson(existing.content) === stableJson(next.content)
+    && stableJson(existing.action) === stableJson(next.action);
+}
+
+function stableJson(value: unknown): string | undefined {
+  return JSON.stringify(sortJsonObjectKeys(value));
+}
+
+function sortJsonObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonObjectKeys);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => [key, sortJsonObjectKeys(nestedValue)]),
+  );
 }
 
 function invalidRequest(message: string): ServiceError {

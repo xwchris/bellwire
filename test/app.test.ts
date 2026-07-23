@@ -419,6 +419,50 @@ describe("Bellwire MVP API", () => {
     expect((await repository.listLiveSurfaces(projectId))).toEqual([]);
   });
 
+  it("treats JSON object key order changes from storage as an unchanged Surface", async () => {
+    const projectId = await createProject();
+    const timestamp = "2026-07-23T02:22:20.000Z";
+    await repository.saveLiveSurface({
+      id: "stored-surface",
+      projectId,
+      surfaceKey: "revenue-today",
+      type: "stats",
+      title: "Today · VideoSays",
+      subtitle: "Shanghai time",
+      content: {
+        metrics: [{ color: "orange", label: "CNY", value: "¥8.00" }],
+      },
+      action: {
+        url: "https://videosays.com/admin/orders",
+        type: "open_url",
+        title: "Open orders",
+      },
+      displayOrder: 0,
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    const response = await app.request(`/v1/projects/${projectId}/surfaces/revenue-today`, {
+      method: "PUT",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "stats",
+        title: "Today · VideoSays",
+        subtitle: "Shanghai time",
+        metrics: [{ label: "CNY", value: "¥8.00", color: "orange" }],
+        action: {
+          type: "open_url",
+          title: "Open orders",
+          url: "https://videosays.com/admin/orders",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: "stored-surface", version: 1 });
+  });
+
   it("keeps project and Surface positions stable across content updates", async () => {
     const firstProjectId = await createProject();
     const secondProjectId = await createProject();
