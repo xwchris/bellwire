@@ -209,6 +209,15 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     return toAgentToken(requiredFirst(rows));
   }
 
+  async listAgentTokens(userId: string): Promise<AgentToken[]> {
+    const rows = await this.getRows("/agent_tokens", {
+      user_id: `eq.${userId}`,
+      revoked_at: "is.null",
+      order: "created_at.desc",
+    });
+    return rows.map(toAgentToken);
+  }
+
   async findAgentTokenByHash(tokenHash: string): Promise<AgentToken | undefined> {
     return this.one(
       "/agent_tokens",
@@ -225,6 +234,16 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     await this.request(`/agent_tokens?${params({ id: `eq.${tokenId}` })}`, {
       method: "PATCH",
       body: { last_used_at: usedAt },
+    });
+  }
+
+  async revokeAgentToken(tokenId: string, userId: string, revokedAt: string): Promise<void> {
+    await this.request(`/agent_tokens?${params({
+      id: `eq.${tokenId}`,
+      user_id: `eq.${userId}`,
+    })}`, {
+      method: "PATCH",
+      body: { revoked_at: revokedAt },
     });
   }
 
@@ -557,10 +576,11 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     return rows.map(toDelivery);
   }
 
-  async getDeliveryHealth(projectId: string): Promise<DeliveryHealth> {
+  async getDeliveryHealth(projectId: string, since: string): Promise<DeliveryHealth> {
     const rows = await this.getRows("/deliveries", {
       select: "status,events!inner(project_id)",
       "events.project_id": `eq.${projectId}`,
+      updated_at: `gte.${since}`,
     });
     const statuses = rows.map((row) => String(row.status));
     const queued = statuses.filter((status) => status === "queued").length;

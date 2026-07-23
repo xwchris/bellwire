@@ -1,0 +1,17 @@
+{
+  "eventType": "payment.success",
+  "fields": {
+    "orderId": { "type": "string", "required": true },
+    "amount": { "type": "number", "required": true },
+    "currency": { "type": "enum", "required": true, "values": ["CNY", "USD", "EUR"] },
+    "product": { "type": "string", "required": true },
+    "customerReference": { "type": "string", "sensitive": true }
+  },
+  "notification": {
+    "title": "Payment received",
+    "body": "{{ currency }} {{ amount }} · {{ product }}",
+    "sound": "default",
+    "group": "payments",
+    "priority": "normal"
+  }
+}

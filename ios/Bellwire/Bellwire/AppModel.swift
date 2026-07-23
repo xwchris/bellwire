@@ -29,6 +29,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveSurfaces: [LiveSurfaceRecord] = []
     @Published private(set) var events: [InboxEvent] = []
     @Published private(set) var devices: [DeviceRecord] = []
+    @Published private(set) var agentConnections: [AgentConnectionRecord] = []
+    @Published private(set) var revokingAgentConnectionID: String?
     @Published private(set) var notificationPermission: NotificationPermissionState = .unknown
     @Published private(set) var isLoading = false
     @Published private(set) var isAuthenticating = false
@@ -247,11 +249,19 @@ final class AppModel: ObservableObject {
             async let surfaceRequest: LiveSurfacesResponse = api.request("v1/surfaces")
             async let inboxRequest: InboxResponse = api.request("v1/inbox?limit=60")
             async let deviceRequest: DevicesResponse = api.request("v1/devices")
-            let (projectResponse, surfaceResponse, inboxResponse, deviceResponse) = try await (
+            async let connectionRequest: AgentConnectionsResponse = api.request("v1/agent-connections")
+            let (
+                projectResponse,
+                surfaceResponse,
+                inboxResponse,
+                deviceResponse,
+                connectionResponse
+            ) = try await (
                 projectRequest,
                 surfaceRequest,
                 inboxRequest,
-                deviceRequest
+                deviceRequest,
+                connectionRequest
             )
             guard !Task.isCancelled, session?.user.id == userID else { return }
             let orderedProjects = projectResponse.projects.sorted(by: stableProjectOrder)
@@ -267,6 +277,7 @@ final class AppModel: ObservableObject {
             liveSurfaces = orderedSurfaces
             events = inboxResponse.events
             devices = deviceResponse.devices
+            agentConnections = connectionResponse.connections
             lastDashboardRefreshAt = Date()
             errorMessage = nil
         } catch {
@@ -408,6 +419,21 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func revokeAgentConnection(id: String) async {
+        guard revokingAgentConnectionID == nil else { return }
+        revokingAgentConnectionID = id
+        defer { revokingAgentConnectionID = nil }
+        do {
+            try await api.requestVoid("v1/agent-connections/\(id)", method: .delete)
+            withAnimation(BellwireAnimation.standard) {
+                agentConnections.removeAll { $0.id == id }
+            }
+            BellwireHaptics.success()
+        } catch {
+            errorMessage = friendlyMessage(error)
+        }
+    }
+
     func requestNotificationPermission() async {
         do {
             let granted = try await UNUserNotificationCenter.current()
@@ -461,6 +487,8 @@ final class AppModel: ObservableObject {
         liveSurfaces = []
         events = []
         devices = []
+        agentConnections = []
+        revokingAgentConnectionID = nil
         binding = nil
         pendingEventID = nil
         lastDashboardRefreshAt = nil

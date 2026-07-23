@@ -2,7 +2,7 @@
 
 ## Node.js
 
-Use the existing HTTP client when possible. For Node 20+:
+Use the existing HTTP client when possible. For Node 22+:
 
 ```ts
 type BellwireEvent = {

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import { AGENT_SCOPES, type Principal } from "../domain/models";

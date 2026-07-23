@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 alter table public.devices
   add column if not exists installation_id uuid;
 

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 create or replace function public.claim_device_binding(
   p_code_hash text,
   p_consumed_at timestamptz,

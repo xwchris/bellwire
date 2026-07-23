@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {

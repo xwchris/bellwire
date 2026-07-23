@@ -51,8 +51,10 @@ export interface BellwireRepository {
   ): Promise<AgentToken | undefined>;
 
   saveAgentToken(token: AgentToken): Promise<AgentToken>;
+  listAgentTokens(userId: string): Promise<AgentToken[]>;
   findAgentTokenByHash(tokenHash: string): Promise<AgentToken | undefined>;
   markAgentTokenUsed(tokenId: string, usedAt: string): Promise<void>;
+  revokeAgentToken(tokenId: string, userId: string, revokedAt: string): Promise<void>;
 
   saveEventSchema(schema: EventSchema): Promise<EventSchema>;
   getEventSchema(
@@ -105,5 +107,5 @@ export interface BellwireRepository {
   ): Promise<Delivery | undefined>;
   updateDelivery(delivery: Delivery): Promise<Delivery>;
   listDeliveries(eventId: string): Promise<Delivery[]>;
-  getDeliveryHealth(projectId: string): Promise<DeliveryHealth>;
+  getDeliveryHealth(projectId: string, since: string): Promise<DeliveryHealth>;
 }

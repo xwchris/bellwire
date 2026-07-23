@@ -4,6 +4,7 @@ import {
   EVENT_FIELD_TYPES,
   LIVE_SURFACE_TYPES,
   type BellwireEvent,
+  type AgentConnection,
   type AgentScope,
   type Delivery,
   type EventFieldDefinition,
@@ -27,6 +28,7 @@ type ErrorCode =
   | "INVALID_REQUEST"
   | "PROJECT_NOT_FOUND"
   | "DEVICE_NOT_FOUND"
+  | "AGENT_CONNECTION_NOT_FOUND"
   | "EVENT_NOT_FOUND"
   | "EVENT_SCHEMA_NOT_FOUND"
   | "NOTIFICATION_SURFACE_NOT_FOUND"
@@ -181,7 +183,7 @@ export class BellwireService {
       this.repository.listEventSchemas(projectId),
       this.repository.listNotificationSurfaces(projectId),
       this.repository.listLiveSurfaces(projectId),
-      this.repository.getDeliveryHealth(projectId),
+      this.repository.getDeliveryHealth(projectId, deliveryHealthWindowStart()),
     ]);
     return { ...project, eventSchemas, notificationSurfaces, liveSurfaces, deliveryHealth };
   }
@@ -268,6 +270,7 @@ export class BellwireService {
   }
 
   async createDeviceBinding(principal: Principal) {
+    this.requireSignedInUser(principal);
     const code = createPairingCode();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 10 * 60 * 1_000).toISOString();
@@ -312,6 +315,31 @@ export class BellwireService {
       token,
       createdAt: record.createdAt,
     };
+  }
+
+  async listAgentConnections(principal: Principal): Promise<{ connections: AgentConnection[] }> {
+    this.requireSignedInUser(principal);
+    const tokens = await this.repository.listAgentTokens(principal.userId);
+    return {
+      connections: tokens.map((token) => ({
+        id: token.id,
+        name: token.name,
+        scopes: token.scopes,
+        createdAt: token.createdAt,
+        lastUsedAt: token.lastUsedAt,
+        expiresAt: token.expiresAt,
+      })),
+    };
+  }
+
+  async revokeAgentConnection(principal: Principal, tokenId: string): Promise<void> {
+    this.requireSignedInUser(principal);
+    const connection = (await this.repository.listAgentTokens(principal.userId))
+      .find((token) => token.id === tokenId);
+    if (!connection) {
+      throw new ServiceError(404, "AGENT_CONNECTION_NOT_FOUND", "Agent connection not found");
+    }
+    await this.repository.revokeAgentToken(tokenId, principal.userId, new Date().toISOString());
   }
 
   async createEventSchema(
@@ -633,7 +661,7 @@ export class BellwireService {
 
   async getDeliveryHealth(principal: Principal, projectId: string) {
     await this.requireOwnedProject(principal, projectId);
-    return this.repository.getDeliveryHealth(projectId);
+    return this.repository.getDeliveryHealth(projectId, deliveryHealthWindowStart());
   }
 
   async getDeliveries(principal: Principal, eventId: string): Promise<{ deliveries: Delivery[] }> {
@@ -787,6 +815,16 @@ export class BellwireService {
     }
     return project;
   }
+
+  private requireSignedInUser(principal: Principal): void {
+    if (principal.kind !== "user") {
+      throw new ServiceError(403, "FORBIDDEN", "This action requires a signed-in user");
+    }
+  }
+}
+
+function deliveryHealthWindowStart(): string {
+  return new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
 }
 
 function eventSensitiveFields(event: BellwireEvent): string[] {

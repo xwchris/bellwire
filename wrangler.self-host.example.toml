@@ -1,0 +1,23 @@
+name = "bellwire-self-host"
+main = "src/index.ts"
+compatibility_date = "2026-07-20"
+workers_dev = true
+preview_urls = true
+
+[vars]
+APP_ENV = "production"
+SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
+APNS_BUNDLE_ID = "com.example.bellwire"
+APP_URL_SCHEME = "bellwire-self-host"
+APNS_ENVIRONMENT = "production"
+
+[[queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "bellwire-self-host-deliveries"
+
+[[queues.consumers]]
+queue = "bellwire-self-host-deliveries"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "bellwire-self-host-deliveries-dlq"

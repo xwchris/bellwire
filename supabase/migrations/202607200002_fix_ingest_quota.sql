@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 create or replace function public.consume_ingest_quota(
   p_key text,
   p_limit integer,

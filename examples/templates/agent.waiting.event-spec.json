@@ -1,0 +1,16 @@
+{
+  "eventType": "agent.waiting",
+  "fields": {
+    "taskId": { "type": "string", "required": true },
+    "reason": { "type": "string", "required": true },
+    "repository": { "type": "string" },
+    "privateContext": { "type": "string", "sensitive": true }
+  },
+  "notification": {
+    "title": "Agent needs a decision",
+    "body": "{{ reason }}",
+    "sound": "default",
+    "group": "agents",
+    "priority": "normal"
+  }
+}

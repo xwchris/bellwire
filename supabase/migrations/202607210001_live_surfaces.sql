@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 create table public.live_surfaces (
   id uuid primary key default extensions.gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,

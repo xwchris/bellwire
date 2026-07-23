@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 export type TokenKind = "agent" | "ingest";
 
 export function createOpaqueToken(kind: TokenKind): string {

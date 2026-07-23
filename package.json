@@ -2,18 +2,21 @@
   "name": "bellwire",
   "version": "0.1.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:worker": "vitest run --exclude test/ios-preview.test.js",
+    "test:ios": "vitest run test/ios-preview.test.js",
     "test:watch": "vitest",
     "test:live": "node scripts/live-smoke.mjs",
+    "self-host:bootstrap": "node scripts/self-host-bootstrap.mjs",
+    "self-host:doctor": "node scripts/self-host-doctor.mjs",
+    "self-host:apns-preflight": "node scripts/apns-preflight.mjs",
     "build": "wrangler deploy --dry-run --outdir dist",
-    "web:dev": "npm --prefix website run dev",
-    "web:build": "npm --prefix website run build",
-    "web:preview": "npm --prefix website run preview",
     "ios:build": "xcodebuild -project ios/Bellwire/Bellwire.xcodeproj -scheme Bellwire -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build"
   },
   "dependencies": {
@@ -31,6 +34,6 @@
     "wrangler": "^4.25.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

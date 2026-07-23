@@ -54,3 +54,11 @@
 "Create a private sample project with a live card and event. You can delete it at any time." = "Create a private sample project with a live card and event. You can delete it at any time.";
 "Create demo project" = "Create demo project";
 "Creating demo…" = "Creating demo…";
+"Disconnect Agent?" = "Disconnect Agent?";
+"Disconnect" = "Disconnect";
+"“%@” will immediately lose access to Bellwire. Your projects and data will remain." = "“%@” will immediately lose access to Bellwire. Your projects and data will remain.";
+"Active" = "Active";
+"Last used" = "Last used";
+"Connected" = "Connected";
+"Disconnect %@" = "Disconnect %@";
+"Revokes this Agent’s Bellwire access" = "Revokes this Agent’s Bellwire access";

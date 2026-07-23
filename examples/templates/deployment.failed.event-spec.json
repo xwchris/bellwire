@@ -1,0 +1,15 @@
+{
+  "eventType": "deployment.failed",
+  "fields": {
+    "environment": { "type": "enum", "required": true, "values": ["Preview", "Staging", "Production"] },
+    "revision": { "type": "string", "required": true },
+    "runURL": { "type": "url", "required": true }
+  },
+  "notification": {
+    "title": "Deployment failed",
+    "body": "{{ environment }} · {{ revision }}",
+    "sound": "default",
+    "group": "deployments",
+    "priority": "normal"
+  }
+}
