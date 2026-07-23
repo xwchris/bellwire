@@ -375,6 +375,75 @@ describe("SupabaseBellwireRepository", () => {
     });
   });
 
+  it("stores device public keys and opaque direct connection envelopes", async () => {
+    const requests: Request[] = [];
+    const deviceKeyRow = {
+      id: "11111111-1111-4111-8111-111111111111",
+      user_id: "user-id",
+      installation_id: "22222222-2222-4222-8222-222222222222",
+      agreement_public_key: "agreement-key",
+      signing_public_key: "signing-key",
+      algorithm: "p256",
+      created_at: "2026-07-23T01:00:00.000Z",
+      last_active_at: "2026-07-23T01:00:00.000Z",
+      revoked_at: null,
+    };
+    const envelopeRow = {
+      id: "33333333-3333-4333-8333-333333333333",
+      user_id: "user-id",
+      device_key_id: deviceKeyRow.id,
+      algorithm: "p256-hkdf-sha256-aes-gcm",
+      ephemeral_public_key: "ephemeral-key",
+      sealed_box: "opaque-ciphertext",
+      created_at: "2026-07-23T01:00:00.000Z",
+      expires_at: "2026-07-24T01:00:00.000Z",
+    };
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.method === "DELETE") return new Response(null, { status: 204 });
+        if (request.url.includes("/device_keys")) return Response.json([deviceKeyRow]);
+        return Response.json([envelopeRow]);
+      },
+    );
+
+    await repository.saveDeviceKey({
+      id: deviceKeyRow.id,
+      userId: "user-id",
+      installationId: deviceKeyRow.installation_id,
+      agreementPublicKey: deviceKeyRow.agreement_public_key,
+      signingPublicKey: deviceKeyRow.signing_public_key,
+      algorithm: "p256",
+      createdAt: deviceKeyRow.created_at,
+      lastActiveAt: deviceKeyRow.last_active_at,
+    });
+    await repository.saveDirectConnectionEnvelope({
+      id: envelopeRow.id,
+      userId: "user-id",
+      deviceKeyId: deviceKeyRow.id,
+      algorithm: "p256-hkdf-sha256-aes-gcm",
+      ephemeralPublicKey: envelopeRow.ephemeral_public_key,
+      sealedBox: envelopeRow.sealed_box,
+      createdAt: envelopeRow.created_at,
+      expiresAt: envelopeRow.expires_at,
+    });
+    expect(await repository.listDirectConnectionEnvelopes(
+      "user-id",
+      deviceKeyRow.id,
+      "2026-07-23T12:00:00.000Z",
+    )).toMatchObject([{ id: envelopeRow.id, sealedBox: "opaque-ciphertext" }]);
+    await repository.deleteDirectConnectionEnvelope(envelopeRow.id, "user-id");
+
+    expect(requests[0]?.url).toContain("/device_keys?on_conflict=user_id,installation_id");
+    expect(requests[1]?.url).toContain("/direct_connection_envelopes");
+    expect(requests[2]?.url).toContain("expires_at=gt.2026-07-23T12%3A00%3A00.000Z");
+    expect(requests[3]?.method).toBe("DELETE");
+    expect(requests[3]?.url).toContain("user_id=eq.user-id");
+  });
+
   it("fetches the latest notification Surface before evaluating enabled", async () => {
     let request: Request | undefined;
     const repository = new SupabaseBellwireRepository(

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFile } from "node:fs/promises";
+import { createCipheriv, createECDH, hkdfSync, randomBytes } from "node:crypto";
 
 const DEFAULT_API_URL = "https://api.bellwire.app";
 const FIELD_TYPES = new Set(["string", "number", "boolean", "datetime", "url", "enum"]);
@@ -141,6 +142,25 @@ async function run(selectedCommand, args) {
       return apiRequest(`/v1/events/${encodeURIComponent(required(args, "event"))}`);
     case "health":
       return apiRequest(`/v1/projects/${encodeURIComponent(required(args, "project"))}/delivery-health`);
+    case "encrypt-direct-connection":
+    case "publish-direct-connection": {
+      const manifest = await readJsonFile(required(args, "file"));
+      validateDirectConnectionManifest(manifest);
+      const deviceKeyId = required(args, "device-key-id").toLowerCase();
+      if (!/^[0-9a-f-]{36}$/u.test(deviceKeyId)) throw new Error("--device-key-id must be a UUID");
+      const encrypted = encryptDirectConnection(
+        manifest,
+        deviceKeyId,
+        required(args, "agreement-public-key"),
+      );
+      if (selectedCommand === "encrypt-direct-connection") {
+        return { deviceKeyId, ...encrypted };
+      }
+      return apiRequest("/v1/direct-connections", {
+        method: "POST",
+        body: { deviceKeyId, ...encrypted },
+      });
+    }
     default:
       throw new Error(`Unknown command: ${selectedCommand}`);
   }
@@ -264,6 +284,68 @@ function validateTestEvent(value) {
     throw new Error("Test event requires type, data, and occurredAt");
   }
   if (Number.isNaN(Date.parse(value.occurredAt))) throw new Error("occurredAt must be an ISO datetime");
+}
+
+function validateDirectConnectionManifest(value) {
+  if (!isRecord(value) || value.version !== 1) {
+    throw new Error("Direct connection manifest version must be 1");
+  }
+  bounded(value.connectionId, "connectionId", 120, true);
+  bounded(value.baseUrl, "baseUrl", 2048, true);
+  try {
+    const url = new URL(value.baseUrl);
+    if (url.protocol !== "https:" || url.username || url.password || !url.hostname) throw new Error();
+  } catch {
+    throw new Error("baseUrl must be a public HTTPS URL without embedded credentials");
+  }
+  if (!nonEmpty(value.surfacesPath) || !value.surfacesPath.startsWith("/") || value.surfacesPath.startsWith("//")) {
+    throw new Error("surfacesPath must be an absolute URL path");
+  }
+  if (!isRecord(value.project)) throw new Error("project is required");
+  bounded(value.project.id, "project.id", 120, true);
+  bounded(value.project.name, "project.name", 120, true);
+  bounded(value.project.icon, "project.icon", 120, true);
+  if (value.project.logoUrl !== undefined) validateLogoUrl(value.project.logoUrl);
+  if (!Number.isInteger(value.project.displayOrder) || value.project.displayOrder < 0) {
+    throw new Error("project.displayOrder must be a non-negative integer");
+  }
+}
+
+function encryptDirectConnection(manifest, deviceKeyId, agreementPublicKey) {
+  let targetPublicKey;
+  try {
+    targetPublicKey = Buffer.from(agreementPublicKey, "base64");
+  } catch {
+    throw new Error("--agreement-public-key must be base64");
+  }
+  if (targetPublicKey.length !== 65 || targetPublicKey[0] !== 4) {
+    throw new Error("--agreement-public-key must be an uncompressed P-256 public key");
+  }
+  const ephemeral = createECDH("prime256v1");
+  const ephemeralPublicKey = ephemeral.generateKeys();
+  let sharedSecret;
+  try {
+    sharedSecret = ephemeral.computeSecret(targetPublicKey);
+  } catch {
+    throw new Error("--agreement-public-key is not a valid P-256 public key");
+  }
+  const key = Buffer.from(hkdfSync(
+    "sha256",
+    sharedSecret,
+    Buffer.from(deviceKeyId, "utf8"),
+    Buffer.from("bellwire-direct-connection-v1", "utf8"),
+    32,
+  ));
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, nonce);
+  const plaintext = Buffer.from(JSON.stringify(manifest), "utf8");
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const sealedBox = Buffer.concat([nonce, ciphertext, cipher.getAuthTag()]);
+  return {
+    algorithm: "p256-hkdf-sha256-aes-gcm",
+    ephemeralPublicKey: ephemeralPublicKey.toString("base64"),
+    sealedBox: sealedBox.toString("base64"),
+  };
 }
 
 function validateSurface(value) {
@@ -405,5 +487,5 @@ function printResult(value, json) {
 }
 
 function printHelp() {
-  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]\n  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]\n  set-project-order --project <id> --order <integer>\n  delete-project --project <id>\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  set-surface-order --project <id> --key <stable-key> --order <integer>\n  delete-surface --project <id> --key <stable-key>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
+  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]\n  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]\n  set-project-order --project <id> --order <integer>\n  delete-project --project <id>\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  set-surface-order --project <id> --key <stable-key> --order <integer>\n  delete-surface --project <id> --key <stable-key>\n  encrypt-direct-connection --device-key-id <uuid> --agreement-public-key <base64> --file <manifest.json>\n  publish-direct-connection --device-key-id <uuid> --agreement-public-key <base64> --file <manifest.json>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
 }

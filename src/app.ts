@@ -23,7 +23,13 @@ export function createApp(dependencies: {
 
   app.post("/v1/device-bindings", async (context) => {
     const principal = await authenticate(context, dependencies.authenticator);
-    return context.json(await dependencies.service.createDeviceBinding(principal), 201);
+    return context.json(
+      await dependencies.service.createDeviceBinding(
+        principal,
+        await readOptionalJson(context.req.raw),
+      ),
+      201,
+    );
   });
 
   app.post("/v1/device-bindings/confirm", async (context) =>
@@ -46,6 +52,36 @@ export function createApp(dependencies: {
     await dependencies.service.revokeAgentConnection(
       principal,
       context.req.param("connectionId"),
+    );
+    return context.body(null, 204);
+  });
+
+  app.post("/v1/direct-connections", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    return context.json(
+      await dependencies.service.createDirectConnectionEnvelope(
+        principal,
+        await readJson(context.req.raw),
+      ),
+      201,
+    );
+  });
+
+  app.get("/v1/direct-connections", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    return context.json(
+      await dependencies.service.listDirectConnectionEnvelopes(
+        principal,
+        readQueryString(context, "deviceKeyId") ?? "",
+      ),
+    );
+  });
+
+  app.delete("/v1/direct-connections/:envelopeId", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    await dependencies.service.deleteDirectConnectionEnvelope(
+      principal,
+      context.req.param("envelopeId"),
     );
     return context.body(null, 204);
   });
@@ -353,6 +389,16 @@ async function scopedPrincipal(
 async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json();
+  } catch {
+    throw new ServiceError(400, "INVALID_REQUEST", "A valid JSON body is required");
+  }
+}
+
+async function readOptionalJson(request: Request): Promise<unknown> {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
   } catch {
     throw new ServiceError(400, "INVALID_REQUEST", "A valid JSON body is required");
   }

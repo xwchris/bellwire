@@ -19,17 +19,20 @@ Connect repository state and events to the user's Bellwire cards, inbox, and iPh
 
    Store the returned Agent token in the user's approved secret store. Never commit it.
 4. Create or reuse the Bellwire project. Search existing configuration before creating another project.
-5. Choose the right primitive:
+5. Choose the privacy mode before the rendering primitive:
+   - For private metrics or operational state that the user's service can expose over HTTPS, prefer Bellwire Direct. The App signs requests and pulls cards directly; Bellwire only relays an encrypted connection manifest. Read [direct-connections.md](references/direct-connections.md).
+   - Use hosted Surfaces only when the user accepts Bellwire storing the display-ready card payload.
+6. Choose the right primitive:
    - Use a live Surface for current state that should update in place, such as stats, health, progress, an alert, or a timer. Read [surfaces.md](references/surfaces.md).
    - Use an Event for durable history, completion, failure, recovery, or a decision boundary. Read [event-spec.md](references/event-spec.md).
-6. For a Surface, choose a stable key and upsert the already-computed display state. Do not create a new key for every update.
-7. For an Event, define minimal fields, create the schema and notification Surface, then create a project-scoped Ingest Token. Mark personal, credential, or customer identifiers `sensitive: true`.
-8. Modify the smallest reliable trigger point. Send or update only after the underlying business operation commits.
+7. For a Surface, choose a stable key and upsert the already-computed display state. Do not create a new key for every update.
+8. For an Event, define minimal fields, create the schema and notification Surface, then create a project-scoped Ingest Token. Mark personal, credential, or customer identifiers `sensitive: true`.
+9. Modify the smallest reliable trigger point. Send or update only after the underlying business operation commits.
    - Prefer a direct post-commit Bellwire call when the application owns the business operation.
    - When a payment, commerce, deployment, or automation provider is the source of truth, read [webhooks.md](references/webhooks.md) and add a provider-specific webhook adapter.
-9. Run the repository's existing tests plus a focused test. Never weaken a business test to make Bellwire pass.
-10. Persist and deploy the source-side adapter through the repository's real source of truth. If commit or push is outside the user's request, report that explicitly instead of calling the integration durable.
-11. Verify the integration level using [production-verification.md](references/production-verification.md). Do not claim the phone presented a notification when the server only reports `accepted_by_apns`.
+10. Run the repository's existing tests plus a focused test. Never weaken a business test to make Bellwire pass.
+11. Persist and deploy the source-side adapter through the repository's real source of truth. If commit or push is outside the user's request, report that explicitly instead of calling the integration durable.
+12. Verify the integration level using [production-verification.md](references/production-verification.md). Do not claim the phone presented a notification when the server only reports `accepted_by_apns`.
 
 ## Integration status
 
@@ -58,6 +61,10 @@ node <skill-dir>/scripts/bellwire.mjs set-surface-order --project <id> --key pro
 node <skill-dir>/scripts/bellwire.mjs send-test --project <id> --file test-event.json
 node <skill-dir>/scripts/bellwire.mjs event --event <event-id>
 node <skill-dir>/scripts/bellwire.mjs health --project <id>
+node <skill-dir>/scripts/bellwire.mjs publish-direct-connection \
+  --device-key-id <id> \
+  --agreement-public-key <base64> \
+  --file direct-connection.json
 ```
 
 `delete-project` is permanent and cascades through the project's schemas, tokens, events,
@@ -88,6 +95,7 @@ Use `--json` for machine-readable output. Read [api.md](references/api.md) when 
 - Reuse a meaningful stable key such as `sales-today`, `prod-api`, or `nightly-backup`.
 - Preserve the assigned `displayOrder` during routine updates. Change it only when the user explicitly asks to reorder a card.
 - Send display-ready values. For example, compute revenue in the source system and send `¥2,430`; Bellwire does not infer business aggregation from raw events.
+- For private or customer-derived metrics, prefer a signed Bellwire Direct endpoint so the card payload never enters Bellwire storage.
 - Choose one of the supported native types. Never embed HTML, JavaScript, Swift, CSS, or arbitrary rendering instructions.
 - Prefer a Surface for frequent progress and metric updates; avoid flooding the Event inbox.
 - Use `open_url` actions only when the destination is expected and safe for the user.

@@ -244,6 +244,10 @@ final class AppModel: ObservableObject {
 
     private func performDashboardLoad() async {
         guard let userID = session?.user.id else { return }
+        let storedDirectConnections = keychain.directConnectionManifests(userID: userID)
+        let directProjectIDs = Set(storedDirectConnections.map(\.project.id))
+        let cachedDirectProjects = projects.filter { directProjectIDs.contains($0.id) }
+        let cachedDirectSurfaces = liveSurfaces.filter { directProjectIDs.contains($0.projectId) }
         do {
             async let projectRequest: ProjectsResponse = api.request("v1/projects")
             async let surfaceRequest: LiveSurfacesResponse = api.request("v1/surfaces")
@@ -273,13 +277,14 @@ final class AppModel: ObservableObject {
                 if left.displayOrder != right.displayOrder { return left.displayOrder < right.displayOrder }
                 return left.id < right.id
             }
-            projects = orderedProjects
-            liveSurfaces = orderedSurfaces
+            projects = (orderedProjects + cachedDirectProjects).sorted(by: stableProjectOrder)
+            liveSurfaces = orderedSurfaces + cachedDirectSurfaces
             events = inboxResponse.events
             devices = deviceResponse.devices
             agentConnections = connectionResponse.connections
             lastDashboardRefreshAt = Date()
             errorMessage = nil
+            await refreshDirectConnections(userID: userID)
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = friendlyMessage(error)
@@ -412,7 +417,16 @@ final class AppModel: ObservableObject {
 
     func createBinding() async {
         do {
-            let response: BindingResponse = try await api.request("v1/device-bindings", method: .post)
+            struct Payload: Encodable {
+                let deviceKey: DeviceKeyDescriptor
+            }
+            let installationID = try keychain.installationID()
+            let identity = try keychain.deviceIdentity()
+            let response: BindingResponse = try await api.request(
+                "v1/device-bindings",
+                method: .post,
+                body: Payload(deviceKey: identity.descriptor(installationID: installationID))
+            )
             binding = response
         } catch {
             errorMessage = friendlyMessage(error)
@@ -557,6 +571,119 @@ final class AppModel: ObservableObject {
         session = value
     }
 
+    private func refreshDirectConnections(userID: String) async {
+        guard let identity = try? keychain.deviceIdentity() else { return }
+        var manifests = keychain.directConnectionManifests(userID: userID)
+        if let response: DirectConnectionEnvelopesResponse = try? await api.request(
+            "v1/direct-connections?deviceKeyId=\(identity.id)"
+        ) {
+            for envelope in response.envelopes where envelope.deviceKeyId == identity.id {
+                guard let plaintext = try? identity.decrypt(envelope),
+                      let manifest = try? JSONDecoder().decode(
+                        DirectConnectionManifest.self,
+                        from: plaintext
+                      ),
+                      manifest.surfacesURL != nil
+                else { continue }
+                manifests.removeAll { $0.connectionId == manifest.connectionId }
+                manifests.append(manifest)
+                do {
+                    try keychain.saveDirectConnectionManifests(manifests, userID: userID)
+                    try await api.requestVoid(
+                        "v1/direct-connections/\(envelope.id)",
+                        method: .delete
+                    )
+                } catch {
+                    continue
+                }
+            }
+        }
+
+        for manifest in manifests {
+            guard let result = try? await fetchDirectSurfaces(
+                manifest: manifest,
+                identity: identity
+            ) else { continue }
+            projects.removeAll { $0.id == result.project.id }
+            projects.append(result.project)
+            projects.sort(by: stableProjectOrder)
+            liveSurfaces.removeAll { $0.projectId == result.project.id }
+            liveSurfaces.append(contentsOf: result.surfaces)
+            let projectOrders = Dictionary(
+                uniqueKeysWithValues: projects.map { ($0.id, $0.displayOrder) }
+            )
+            liveSurfaces.sort { left, right in
+                let leftProjectOrder = projectOrders[left.projectId] ?? Int.max
+                let rightProjectOrder = projectOrders[right.projectId] ?? Int.max
+                if leftProjectOrder != rightProjectOrder {
+                    return leftProjectOrder < rightProjectOrder
+                }
+                if left.displayOrder != right.displayOrder {
+                    return left.displayOrder < right.displayOrder
+                }
+                return left.id < right.id
+            }
+        }
+    }
+
+    private func fetchDirectSurfaces(
+        manifest: DirectConnectionManifest,
+        identity: DeviceIdentity
+    ) async throws -> DirectSurfaceResult {
+        guard let url = manifest.surfacesURL else {
+            throw DirectConnectionError.invalidManifest
+        }
+        let timestamp = String(Int(Date().timeIntervalSince1970))
+        let nonce = randomNonce()
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = (components?.percentEncodedPath.isEmpty == false
+            ? components?.percentEncodedPath
+            : "/") ?? "/"
+        let target = components?.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
+        let emptyHash = SHA256.hash(data: Data())
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let canonical = ["GET", target, timestamp, nonce, emptyHash].joined(separator: "\n")
+        let signature = try identity.signature(for: Data(canonical.utf8))
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(manifest.connectionId, forHTTPHeaderField: "X-Bellwire-Connection")
+        request.setValue(identity.id, forHTTPHeaderField: "X-Bellwire-Key-Id")
+        request.setValue(timestamp, forHTTPHeaderField: "X-Bellwire-Timestamp")
+        request.setValue(nonce, forHTTPHeaderField: "X-Bellwire-Nonce")
+        request.setValue(signature, forHTTPHeaderField: "X-Bellwire-Signature")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              data.count <= 1_048_576
+        else { throw DirectConnectionError.invalidResponse }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let payload = try decoder.decode(LiveSurfacesResponse.self, from: data)
+        guard payload.surfaces.allSatisfy({ $0.projectId == manifest.project.id }) else {
+            throw DirectConnectionError.invalidResponse
+        }
+        let now = ISO8601DateFormatter.bellwire.string(from: .now)
+        let project = ProjectSummary(
+            id: manifest.project.id,
+            name: manifest.project.name,
+            slug: "direct-\(manifest.connectionId)",
+            icon: manifest.project.icon,
+            logoUrl: manifest.project.logoUrl,
+            displayOrder: manifest.project.displayOrder,
+            category: "direct",
+            status: "active",
+            endpoint: manifest.baseUrl,
+            createdAt: now,
+            updatedAt: now
+        )
+        return DirectSurfaceResult(project: project, surfaces: payload.surfaces)
+    }
+
     private func friendlyMessage(_ error: Error) -> String {
         if let localized = error as? LocalizedError, let description = localized.errorDescription {
             return description
@@ -583,4 +710,9 @@ final class AppModel: ObservableObject {
         }
         return result
     }
+}
+
+private struct DirectSurfaceResult {
+    let project: ProjectSummary
+    let surfaces: [LiveSurfaceRecord]
 }

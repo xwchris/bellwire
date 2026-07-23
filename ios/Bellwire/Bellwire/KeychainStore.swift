@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 import Foundation
+import CryptoKit
 import Security
 
 struct KeychainStore {
     private let service = AppConfig.keychainService
     private let account = "auth-session"
     private let installationAccount = "installation-id"
+    private let directKeyIDAccount = "direct-key-id-v1"
+    private let directAgreementKeyAccount = "direct-agreement-private-v1"
+    private let directSigningKeyAccount = "direct-signing-private-v1"
 
     func save(_ session: AuthSession) throws {
         let data = try JSONEncoder().encode(session)
@@ -71,6 +75,134 @@ struct KeychainStore {
         guard status == errSecSuccess else { throw KeychainError(status: status) }
         return value
     }
+
+    func deviceIdentity() throws -> DeviceIdentity {
+        let keyID: String
+        if let data = readData(account: directKeyIDAccount),
+           let savedID = String(data: data, encoding: .utf8),
+           UUID(uuidString: savedID) != nil {
+            keyID = savedID.lowercased()
+        } else {
+            keyID = UUID().uuidString.lowercased()
+            try saveData(Data(keyID.utf8), account: directKeyIDAccount)
+        }
+
+        let agreementKey: P256.KeyAgreement.PrivateKey
+        if let data = readData(account: directAgreementKeyAccount),
+           let savedKey = try? P256.KeyAgreement.PrivateKey(rawRepresentation: data) {
+            agreementKey = savedKey
+        } else {
+            agreementKey = P256.KeyAgreement.PrivateKey()
+            try saveData(agreementKey.rawRepresentation, account: directAgreementKeyAccount)
+        }
+
+        let signingKey: P256.Signing.PrivateKey
+        if let data = readData(account: directSigningKeyAccount),
+           let savedKey = try? P256.Signing.PrivateKey(rawRepresentation: data) {
+            signingKey = savedKey
+        } else {
+            signingKey = P256.Signing.PrivateKey()
+            try saveData(signingKey.rawRepresentation, account: directSigningKeyAccount)
+        }
+
+        return DeviceIdentity(id: keyID, agreementKey: agreementKey, signingKey: signingKey)
+    }
+
+    func saveDirectConnectionManifests(
+        _ manifests: [DirectConnectionManifest],
+        userID: String
+    ) throws {
+        try saveData(
+            JSONEncoder().encode(manifests),
+            account: "direct-connections-\(userID)"
+        )
+    }
+
+    func directConnectionManifests(userID: String) -> [DirectConnectionManifest] {
+        guard let data = readData(account: "direct-connections-\(userID)") else { return [] }
+        return (try? JSONDecoder().decode([DirectConnectionManifest].self, from: data)) ?? []
+    }
+
+    private func readData(account: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
+            return nil
+        }
+        return result as? Data
+    }
+
+    private func saveData(_ data: Data, account: String) throws {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(base as CFDictionary)
+        var query = base
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeychainError(status: status) }
+    }
+}
+
+struct DeviceIdentity {
+    let id: String
+    let agreementKey: P256.KeyAgreement.PrivateKey
+    let signingKey: P256.Signing.PrivateKey
+
+    func descriptor(installationID: String) -> DeviceKeyDescriptor {
+        DeviceKeyDescriptor(
+            id: id,
+            installationId: installationID,
+            agreementPublicKey: agreementKey.publicKey.x963Representation.base64EncodedString(),
+            signingPublicKey: signingKey.publicKey.x963Representation.base64EncodedString(),
+            algorithm: "p256"
+        )
+    }
+
+    func decrypt(_ envelope: DirectConnectionEnvelopeRecord) throws -> Data {
+        guard envelope.algorithm == "p256-hkdf-sha256-aes-gcm",
+              let ephemeralData = Data(base64Encoded: envelope.ephemeralPublicKey),
+              let sealedData = Data(base64Encoded: envelope.sealedBox)
+        else { throw DirectConnectionError.invalidEnvelope }
+        let ephemeralKey = try P256.KeyAgreement.PublicKey(x963Representation: ephemeralData)
+        let secret = try agreementKey.sharedSecretFromKeyAgreement(with: ephemeralKey)
+        let key = secret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(id.utf8),
+            sharedInfo: Data("bellwire-direct-connection-v1".utf8),
+            outputByteCount: 32
+        )
+        return try AES.GCM.open(AES.GCM.SealedBox(combined: sealedData), using: key)
+    }
+
+    func signature(for canonicalRequest: Data) throws -> String {
+        try signingKey.signature(for: canonicalRequest)
+            .rawRepresentation
+            .base64EncodedString()
+    }
+}
+
+struct DeviceKeyDescriptor: Encodable {
+    let id: String
+    let installationId: String
+    let agreementPublicKey: String
+    let signingPublicKey: String
+    let algorithm: String
+}
+
+enum DirectConnectionError: Error {
+    case invalidEnvelope
+    case invalidManifest
+    case invalidResponse
 }
 
 struct KeychainError: LocalizedError {

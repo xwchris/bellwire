@@ -1,4 +1,4 @@
 interface:
   display_name: "Bellwire"
-  short_description: "Connect project events to Bellwire on iPhone"
-  default_prompt: "Use $bellwire to add reliable phone notifications to this project."
+  short_description: "Private live cards and iPhone notifications"
+  default_prompt: "Use $bellwire to connect this project with privacy-first cards and reliable iPhone notifications."

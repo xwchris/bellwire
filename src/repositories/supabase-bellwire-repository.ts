@@ -6,6 +6,8 @@ import type {
   DeliveryHealth,
   Device,
   DeviceBinding,
+  DeviceKey,
+  DirectConnectionEnvelope,
   EventListOptions,
   EventListPage,
   EventSchema,
@@ -180,6 +182,14 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     return toDeviceBinding(requiredFirst(rows));
   }
 
+  async findDeviceBindingByCodeHash(codeHash: string): Promise<DeviceBinding | undefined> {
+    return this.one(
+      "/device_bindings",
+      { code_hash: `eq.${codeHash}` },
+      toDeviceBinding,
+    );
+  }
+
   async claimDeviceBinding(
     codeHash: string,
     token: Omit<AgentToken, "userId">,
@@ -245,6 +255,55 @@ export class SupabaseBellwireRepository implements BellwireRepository {
       method: "PATCH",
       body: { revoked_at: revokedAt },
     });
+  }
+
+  async saveDeviceKey(key: DeviceKey): Promise<DeviceKey> {
+    const rows = await this.request<JsonRecord[]>("/device_keys?on_conflict=user_id,installation_id", {
+      method: "POST",
+      body: deviceKeyRow(key),
+      prefer: "resolution=merge-duplicates,return=representation",
+    });
+    return toDeviceKey(requiredFirst(rows));
+  }
+
+  async getDeviceKey(keyId: string, userId: string): Promise<DeviceKey | undefined> {
+    return this.one(
+      "/device_keys",
+      { id: `eq.${keyId}`, user_id: `eq.${userId}`, revoked_at: "is.null" },
+      toDeviceKey,
+    );
+  }
+
+  async saveDirectConnectionEnvelope(
+    envelope: DirectConnectionEnvelope,
+  ): Promise<DirectConnectionEnvelope> {
+    const rows = await this.request<JsonRecord[]>("/direct_connection_envelopes", {
+      method: "POST",
+      body: directConnectionEnvelopeRow(envelope),
+      prefer: "return=representation",
+    });
+    return toDirectConnectionEnvelope(requiredFirst(rows));
+  }
+
+  async listDirectConnectionEnvelopes(
+    userId: string,
+    deviceKeyId: string,
+    now: string,
+  ): Promise<DirectConnectionEnvelope[]> {
+    const rows = await this.getRows("/direct_connection_envelopes", {
+      user_id: `eq.${userId}`,
+      device_key_id: `eq.${deviceKeyId}`,
+      expires_at: `gt.${now}`,
+      order: "created_at.asc",
+    });
+    return rows.map(toDirectConnectionEnvelope);
+  }
+
+  async deleteDirectConnectionEnvelope(envelopeId: string, userId: string): Promise<void> {
+    await this.request(`/direct_connection_envelopes?${params({
+      id: `eq.${envelopeId}`,
+      user_id: `eq.${userId}`,
+    })}`, { method: "DELETE" });
   }
 
   async saveEventSchema(schema: EventSchema): Promise<EventSchema> {
@@ -686,6 +745,7 @@ function toDevice(row: JsonRecord): Device {
 function bindingRow(value: DeviceBinding): JsonRecord {
   return {
     id: value.id, user_id: value.userId, code_hash: value.codeHash,
+    device_key_id: value.deviceKeyId ?? null,
     expires_at: value.expiresAt, consumed_at: value.consumedAt ?? null, created_at: value.createdAt,
   };
 }
@@ -693,8 +753,63 @@ function bindingRow(value: DeviceBinding): JsonRecord {
 function toDeviceBinding(row: JsonRecord): DeviceBinding {
   return {
     id: String(row.id), userId: String(row.user_id), codeHash: String(row.code_hash),
+    deviceKeyId: optionalString(row.device_key_id),
     expiresAt: String(row.expires_at), consumedAt: optionalString(row.consumed_at),
     createdAt: String(row.created_at),
+  };
+}
+
+function deviceKeyRow(value: DeviceKey): JsonRecord {
+  return {
+    id: value.id,
+    user_id: value.userId,
+    installation_id: value.installationId,
+    agreement_public_key: value.agreementPublicKey,
+    signing_public_key: value.signingPublicKey,
+    algorithm: value.algorithm,
+    created_at: value.createdAt,
+    last_active_at: value.lastActiveAt,
+    revoked_at: value.revokedAt ?? null,
+  };
+}
+
+function toDeviceKey(row: JsonRecord): DeviceKey {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    installationId: String(row.installation_id),
+    agreementPublicKey: String(row.agreement_public_key),
+    signingPublicKey: String(row.signing_public_key),
+    algorithm: "p256",
+    createdAt: String(row.created_at),
+    lastActiveAt: String(row.last_active_at),
+    revokedAt: optionalString(row.revoked_at),
+  };
+}
+
+function directConnectionEnvelopeRow(value: DirectConnectionEnvelope): JsonRecord {
+  return {
+    id: value.id,
+    user_id: value.userId,
+    device_key_id: value.deviceKeyId,
+    algorithm: value.algorithm,
+    ephemeral_public_key: value.ephemeralPublicKey,
+    sealed_box: value.sealedBox,
+    created_at: value.createdAt,
+    expires_at: value.expiresAt,
+  };
+}
+
+function toDirectConnectionEnvelope(row: JsonRecord): DirectConnectionEnvelope {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    deviceKeyId: String(row.device_key_id),
+    algorithm: "p256-hkdf-sha256-aes-gcm",
+    ephemeralPublicKey: String(row.ephemeral_public_key),
+    sealedBox: String(row.sealed_box),
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
   };
 }
 

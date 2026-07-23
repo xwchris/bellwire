@@ -7,6 +7,9 @@ Management routes require `Authorization: Bearer $BELLWIRE_AGENT_TOKEN`. Runtime
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `POST` | `/v1/device-bindings/confirm` | Exchange a six-digit code for an Agent token |
+| `POST` | `/v1/direct-connections` | Publish an encrypted Direct connection manifest for the bound device |
+| `GET` | `/v1/direct-connections?deviceKeyId={id}` | Fetch pending encrypted manifests as the signed-in user |
+| `DELETE` | `/v1/direct-connections/{id}` | Delete a manifest after local decryption and Keychain persistence |
 | `POST` | `/v1/projects` | Create a project |
 | `GET` | `/v1/projects` | List projects |
 | `GET` | `/v1/projects/{id}` | Read schema, Surface, and delivery health |

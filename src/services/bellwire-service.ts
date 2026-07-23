@@ -7,6 +7,8 @@ import {
   type AgentConnection,
   type AgentScope,
   type Delivery,
+  type DeviceKey,
+  type DirectConnectionEnvelope,
   type EventFieldDefinition,
   type EventFieldType,
   type EventSchema,
@@ -269,15 +271,19 @@ export class BellwireService {
     await this.repository.deleteDevice(deviceId);
   }
 
-  async createDeviceBinding(principal: Principal) {
+  async createDeviceBinding(principal: Principal, input: unknown = {}) {
     this.requireSignedInUser(principal);
+    const body = asRecord(input);
+    const deviceKey = parseDeviceKey(asRecord(body.deviceKey), principal.userId);
     const code = createPairingCode();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 10 * 60 * 1_000).toISOString();
+    if (deviceKey) await this.repository.saveDeviceKey(deviceKey);
     await this.repository.saveDeviceBinding({
       id: crypto.randomUUID(),
       userId: principal.userId,
       codeHash: await hashSecret(code),
+      deviceKeyId: deviceKey?.id,
       expiresAt,
       createdAt: now.toISOString(),
     });
@@ -300,6 +306,10 @@ export class BellwireService {
     }
     const token = createOpaqueToken("agent");
     const now = new Date().toISOString();
+    const binding = await this.repository.findDeviceBindingByCodeHash(codeHash);
+    const deviceKey = binding?.deviceKeyId
+      ? await this.repository.getDeviceKey(binding.deviceKeyId, binding.userId)
+      : undefined;
     const record = await this.repository.claimDeviceBinding(codeHash, {
       id: crypto.randomUUID(),
       name,
@@ -314,7 +324,69 @@ export class BellwireService {
       scopes: record.scopes,
       token,
       createdAt: record.createdAt,
+      ...(deviceKey ? { deviceKey: publicDeviceKey(deviceKey) } : {}),
     };
+  }
+
+  async createDirectConnectionEnvelope(
+    principal: Principal,
+    input: unknown,
+  ): Promise<Omit<DirectConnectionEnvelope, "userId">> {
+    if (principal.kind !== "agent") {
+      throw new ServiceError(403, "FORBIDDEN", "Only a connected Agent can publish a direct connection");
+    }
+    const body = asRecord(input);
+    const deviceKeyId = readUUID(body.deviceKeyId, "Device key ID");
+    const deviceKey = await this.repository.getDeviceKey(deviceKeyId, principal.userId);
+    if (!deviceKey) throw invalidRequest("Device key is not available for this account");
+    const algorithm = body.algorithm;
+    if (algorithm !== "p256-hkdf-sha256-aes-gcm") {
+      throw invalidRequest("Unsupported direct connection encryption algorithm");
+    }
+    const ephemeralPublicKey = readP256PublicKey(
+      body.ephemeralPublicKey,
+      "Ephemeral public key",
+    );
+    const sealedBox = readBase64(body.sealedBox, "Encrypted connection package", 29, 65_536);
+    const now = new Date();
+    const saved = await this.repository.saveDirectConnectionEnvelope({
+      id: crypto.randomUUID(),
+      userId: principal.userId,
+      deviceKeyId,
+      algorithm,
+      ephemeralPublicKey,
+      sealedBox,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+    });
+    return withoutUserId(saved);
+  }
+
+  async listDirectConnectionEnvelopes(
+    principal: Principal,
+    deviceKeyId: string,
+  ): Promise<{ envelopes: Array<Omit<DirectConnectionEnvelope, "userId">> }> {
+    this.requireSignedInUser(principal);
+    const validDeviceKeyId = readUUID(deviceKeyId, "Device key ID");
+    const deviceKey = await this.repository.getDeviceKey(validDeviceKeyId, principal.userId);
+    if (!deviceKey) return { envelopes: [] };
+    const envelopes = await this.repository.listDirectConnectionEnvelopes(
+      principal.userId,
+      validDeviceKeyId,
+      new Date().toISOString(),
+    );
+    return { envelopes: envelopes.map(withoutUserId) };
+  }
+
+  async deleteDirectConnectionEnvelope(
+    principal: Principal,
+    envelopeId: string,
+  ): Promise<void> {
+    this.requireSignedInUser(principal);
+    await this.repository.deleteDirectConnectionEnvelope(
+      readUUID(envelopeId, "Envelope ID"),
+      principal.userId,
+    );
   }
 
   async listAgentConnections(principal: Principal): Promise<{ connections: AgentConnection[] }> {
@@ -877,6 +949,88 @@ function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readUUID(value: unknown, name: string): string {
+  const result = readNonEmptyString(value)?.toLowerCase();
+  if (!result || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(result)) {
+    throw invalidRequest(`${name} must be a UUID`);
+  }
+  return result;
+}
+
+function parseDeviceKey(value: Record<string, unknown>, userId: string): DeviceKey | undefined {
+  if (Object.keys(value).length === 0) return undefined;
+  if (value.algorithm !== "p256") throw invalidRequest("Device key algorithm must be p256");
+  const now = new Date().toISOString();
+  return {
+    id: readUUID(value.id, "Device key ID"),
+    userId,
+    installationId: readUUID(value.installationId, "Installation ID"),
+    agreementPublicKey: readP256PublicKey(
+      value.agreementPublicKey,
+      "Agreement public key",
+    ),
+    signingPublicKey: readP256PublicKey(value.signingPublicKey, "Signing public key"),
+    algorithm: "p256",
+    createdAt: now,
+    lastActiveAt: now,
+  };
+}
+
+function publicDeviceKey(value: DeviceKey) {
+  return {
+    id: value.id,
+    installationId: value.installationId,
+    agreementPublicKey: value.agreementPublicKey,
+    signingPublicKey: value.signingPublicKey,
+    algorithm: value.algorithm,
+  };
+}
+
+function readP256PublicKey(value: unknown, name: string): string {
+  const encoded = readBase64(value, name, 65, 65);
+  const bytes = decodeBase64(encoded);
+  if (bytes[0] !== 4) throw invalidRequest(`${name} must use uncompressed P-256 representation`);
+  return encoded;
+}
+
+function readBase64(
+  value: unknown,
+  name: string,
+  minimumBytes: number,
+  maximumBytes: number,
+): string {
+  const encoded = readNonEmptyString(value);
+  if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/u.test(encoded)) {
+    throw invalidRequest(`${name} must be valid base64`);
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64(encoded);
+  } catch {
+    throw invalidRequest(`${name} must be valid base64`);
+  }
+  if (bytes.byteLength < minimumBytes || bytes.byteLength > maximumBytes) {
+    throw invalidRequest(`${name} has an invalid size`);
+  }
+  return encoded;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+function withoutUserId(value: DirectConnectionEnvelope): Omit<DirectConnectionEnvelope, "userId"> {
+  return {
+    id: value.id,
+    deviceKeyId: value.deviceKeyId,
+    algorithm: value.algorithm,
+    ephemeralPublicKey: value.ephemeralPublicKey,
+    sealedBox: value.sealedBox,
+    createdAt: value.createdAt,
+    expiresAt: value.expiresAt,
+  };
 }
 
 function readDateTime(value: unknown): string | undefined {

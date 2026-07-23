@@ -6,6 +6,8 @@ import type {
   DeliveryHealth,
   Device,
   DeviceBinding,
+  DeviceKey,
+  DirectConnectionEnvelope,
   EventListOptions,
   EventListPage,
   EventSchema,
@@ -44,6 +46,7 @@ export interface BellwireRepository {
   deleteDevice(deviceId: string): Promise<void>;
 
   saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding>;
+  findDeviceBindingByCodeHash(codeHash: string): Promise<DeviceBinding | undefined>;
   claimDeviceBinding(
     codeHash: string,
     token: Omit<AgentToken, "userId">,
@@ -55,6 +58,18 @@ export interface BellwireRepository {
   findAgentTokenByHash(tokenHash: string): Promise<AgentToken | undefined>;
   markAgentTokenUsed(tokenId: string, usedAt: string): Promise<void>;
   revokeAgentToken(tokenId: string, userId: string, revokedAt: string): Promise<void>;
+
+  saveDeviceKey(key: DeviceKey): Promise<DeviceKey>;
+  getDeviceKey(keyId: string, userId: string): Promise<DeviceKey | undefined>;
+  saveDirectConnectionEnvelope(
+    envelope: DirectConnectionEnvelope,
+  ): Promise<DirectConnectionEnvelope>;
+  listDirectConnectionEnvelopes(
+    userId: string,
+    deviceKeyId: string,
+    now: string,
+  ): Promise<DirectConnectionEnvelope[]>;
+  deleteDirectConnectionEnvelope(envelopeId: string, userId: string): Promise<void>;
 
   saveEventSchema(schema: EventSchema): Promise<EventSchema>;
   getEventSchema(

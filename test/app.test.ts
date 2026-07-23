@@ -123,7 +123,7 @@ describe("Bellwire MVP API", () => {
       compatibility: {
         appVersion: "1.0.0",
         apiVersion: "v1",
-        schemaMigration: "202607230002",
+        schemaMigration: "202607230003",
       },
     });
   });
@@ -618,6 +618,91 @@ describe("Bellwire MVP API", () => {
       method: "POST",
       headers: { authorization: "Bearer agent" },
     })).status).toBe(403);
+  });
+
+  it("bootstraps an opaque direct connection without exposing its plaintext manifest", async () => {
+    const deviceKeyId = "11111111-1111-4111-8111-111111111111";
+    const installationId = "22222222-2222-4222-8222-222222222222";
+    const publicKey = btoa(String.fromCharCode(4, ...new Array(64).fill(7)));
+    const bindingResponse = await app.request("/v1/device-bindings", {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({
+        deviceKey: {
+          id: deviceKeyId,
+          installationId,
+          agreementPublicKey: publicKey,
+          signingPublicKey: publicKey,
+          algorithm: "p256",
+        },
+      }),
+    });
+    expect(bindingResponse.status).toBe(201);
+    const binding = await bindingResponse.json<{ code: string }>();
+    const confirmation = await app.request("/v1/device-bindings/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: binding.code, name: "Private Agent" }),
+    });
+    expect(confirmation.status).toBe(201);
+    const connected = await confirmation.json<{
+      token: string;
+      deviceKey: {
+        id: string;
+        agreementPublicKey: string;
+        signingPublicKey: string;
+      };
+    }>();
+    expect(connected.deviceKey).toMatchObject({
+      id: deviceKeyId,
+      agreementPublicKey: publicKey,
+      signingPublicKey: publicKey,
+    });
+
+    const agentApp = createApp({
+      service: new BellwireService(repository, dispatcher),
+      authenticator: new PrincipalAuthenticator(repository, {}),
+    });
+    const ephemeralPublicKey = btoa(String.fromCharCode(4, ...new Array(64).fill(9)));
+    const sealedBox = btoa(String.fromCharCode(...new Array(48).fill(11)));
+    const published = await agentApp.request("/v1/direct-connections", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${connected.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        deviceKeyId,
+        algorithm: "p256-hkdf-sha256-aes-gcm",
+        ephemeralPublicKey,
+        sealedBox,
+      }),
+    });
+    expect(published.status).toBe(201);
+    const envelope = await published.json<{ id: string; userId?: string }>();
+    expect(envelope).not.toHaveProperty("userId");
+    expect(JSON.stringify(envelope)).not.toContain("videosays.com");
+
+    const pending = await app.request(
+      `/v1/direct-connections?deviceKeyId=${deviceKeyId}`,
+      { headers: { authorization: "Bearer test" } },
+    );
+    expect(await pending.json()).toMatchObject({
+      envelopes: [{
+        id: envelope.id,
+        deviceKeyId,
+        ephemeralPublicKey,
+        sealedBox,
+      }],
+    });
+    expect((await app.request(`/v1/direct-connections/${envelope.id}`, {
+      method: "DELETE",
+      headers: { authorization: "Bearer test" },
+    })).status).toBe(204);
+    expect(await (await app.request(
+      `/v1/direct-connections?deviceKeyId=${deviceKeyId}`,
+      { headers: { authorization: "Bearer test" } },
+    )).json()).toEqual({ envelopes: [] });
   });
 
   it("reports delivery health from the last 24 hours instead of all history", async () => {

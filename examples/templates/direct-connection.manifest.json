@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "connectionId": "videosays-device-connection",
+  "baseUrl": "https://videosays.com",
+  "surfacesPath": "/api/bellwire/v1/surfaces",
+  "project": {
+    "id": "videosays-direct",
+    "name": "VideoSays",
+    "icon": "play.rectangle.fill",
+    "logoUrl": "https://videosays.com/logo.png",
+    "displayOrder": 10
+  }
+}

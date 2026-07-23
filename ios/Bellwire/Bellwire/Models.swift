@@ -356,6 +356,50 @@ struct AgentConnectionsResponse: Decodable {
     let connections: [AgentConnectionRecord]
 }
 
+struct DirectConnectionEnvelopeRecord: Decodable, Identifiable {
+    let id: String
+    let deviceKeyId: String
+    let algorithm: String
+    let ephemeralPublicKey: String
+    let sealedBox: String
+    let createdAt: String
+    let expiresAt: String
+}
+
+struct DirectConnectionEnvelopesResponse: Decodable {
+    let envelopes: [DirectConnectionEnvelopeRecord]
+}
+
+struct DirectConnectionManifest: Codable, Identifiable {
+    let version: Int
+    let connectionId: String
+    let baseUrl: String
+    let surfacesPath: String
+    let project: DirectProjectManifest
+
+    var id: String { connectionId }
+
+    var surfacesURL: URL? {
+        guard version == 1,
+              let base = URL(string: baseUrl),
+              base.scheme?.lowercased() == "https",
+              base.user == nil,
+              base.password == nil,
+              surfacesPath.hasPrefix("/"),
+              !surfacesPath.hasPrefix("//")
+        else { return nil }
+        return URL(string: surfacesPath, relativeTo: base)?.absoluteURL
+    }
+}
+
+struct DirectProjectManifest: Codable {
+    let id: String
+    let name: String
+    let icon: String
+    let logoUrl: String?
+    let displayOrder: Int
+}
+
 struct BindingResponse: Decodable, Identifiable {
     let code: String
     let expiresAt: String

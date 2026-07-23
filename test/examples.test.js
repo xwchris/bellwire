@@ -2,6 +2,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createDecipheriv, createECDH, hkdfSync } from "node:crypto";
+import { Buffer } from "node:buffer";
 import process from "node:process";
 
 import { describe, expect, it } from "vitest";
@@ -46,5 +48,50 @@ describe("public integration examples", () => {
       ...readdirSync(templatesRoot).map((name) => readFileSync(join(templatesRoot, name), "utf8")),
     ].join("\n");
     expect(publicSources).not.toMatch(/bw_(?:agent|live|ingest)_[A-Za-z0-9_-]{12,}/u);
+  });
+
+  it("encrypts a direct connection manifest for only the target device", () => {
+    const deviceKeyId = "11111111-1111-4111-8111-111111111111";
+    const device = createECDH("prime256v1");
+    const publicKey = device.generateKeys();
+    const result = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "encrypt-direct-connection",
+        "--device-key-id",
+        deviceKeyId,
+        "--agreement-public-key",
+        publicKey.toString("base64"),
+        "--file",
+        join(templatesRoot, "direct-connection.manifest.json"),
+        "--json",
+      ],
+      { cwd: repositoryRoot, encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    const sharedSecret = device.computeSecret(
+      Buffer.from(envelope.ephemeralPublicKey, "base64"),
+    );
+    const key = Buffer.from(hkdfSync(
+      "sha256",
+      sharedSecret,
+      Buffer.from(deviceKeyId),
+      Buffer.from("bellwire-direct-connection-v1"),
+      32,
+    ));
+    const combined = Buffer.from(envelope.sealedBox, "base64");
+    const decipher = createDecipheriv("aes-256-gcm", key, combined.subarray(0, 12));
+    decipher.setAuthTag(combined.subarray(-16));
+    const plaintext = Buffer.concat([
+      decipher.update(combined.subarray(12, -16)),
+      decipher.final(),
+    ]);
+    expect(JSON.parse(plaintext.toString("utf8"))).toMatchObject({
+      version: 1,
+      connectionId: "videosays-device-connection",
+    });
+    expect(result.stdout).not.toContain("videosays.com");
   });
 });

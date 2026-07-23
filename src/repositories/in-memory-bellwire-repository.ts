@@ -6,6 +6,8 @@ import type {
   DeliveryHealth,
   Device,
   DeviceBinding,
+  DeviceKey,
+  DirectConnectionEnvelope,
   EventListOptions,
   EventListPage,
   EventSchema,
@@ -28,6 +30,8 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   private readonly projects = new Map<string, Project>();
   private readonly devices = new Map<string, Device>();
   private readonly deviceBindings = new Map<string, DeviceBinding>();
+  private readonly deviceKeys = new Map<string, DeviceKey>();
+  private readonly directConnectionEnvelopes = new Map<string, DirectConnectionEnvelope>();
   private readonly agentTokens = new Map<string, AgentToken>();
   private readonly eventSchemas = new Map<string, EventSchema[]>();
   private readonly surfaces = new Map<string, NotificationSurface[]>();
@@ -168,6 +172,12 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     return copy(binding);
   }
 
+  async findDeviceBindingByCodeHash(codeHash: string): Promise<DeviceBinding | undefined> {
+    const binding = [...this.deviceBindings.values()]
+      .find((candidate) => candidate.codeHash === codeHash);
+    return binding ? copy(binding) : undefined;
+  }
+
   async claimDeviceBinding(
     codeHash: string,
     token: Omit<AgentToken, "userId">,
@@ -221,6 +231,48 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     if (token?.userId === userId) {
       this.agentTokens.set(tokenId, { ...token, revokedAt });
     }
+  }
+
+  async saveDeviceKey(key: DeviceKey): Promise<DeviceKey> {
+    const existing = [...this.deviceKeys.values()]
+      .find((candidate) =>
+        candidate.userId === key.userId && candidate.installationId === key.installationId
+      );
+    if (existing && existing.id !== key.id) this.deviceKeys.delete(existing.id);
+    this.deviceKeys.set(key.id, copy(key));
+    return copy(key);
+  }
+
+  async getDeviceKey(keyId: string, userId: string): Promise<DeviceKey | undefined> {
+    const key = this.deviceKeys.get(keyId);
+    return key?.userId === userId && !key.revokedAt ? copy(key) : undefined;
+  }
+
+  async saveDirectConnectionEnvelope(
+    envelope: DirectConnectionEnvelope,
+  ): Promise<DirectConnectionEnvelope> {
+    this.directConnectionEnvelopes.set(envelope.id, copy(envelope));
+    return copy(envelope);
+  }
+
+  async listDirectConnectionEnvelopes(
+    userId: string,
+    deviceKeyId: string,
+    now: string,
+  ): Promise<DirectConnectionEnvelope[]> {
+    return [...this.directConnectionEnvelopes.values()]
+      .filter((envelope) =>
+        envelope.userId === userId
+        && envelope.deviceKeyId === deviceKeyId
+        && envelope.expiresAt > now
+      )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(copy);
+  }
+
+  async deleteDirectConnectionEnvelope(envelopeId: string, userId: string): Promise<void> {
+    const envelope = this.directConnectionEnvelopes.get(envelopeId);
+    if (envelope?.userId === userId) this.directConnectionEnvelopes.delete(envelopeId);
   }
 
   async saveEventSchema(schema: EventSchema): Promise<EventSchema> {

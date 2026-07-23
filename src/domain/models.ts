@@ -68,9 +68,22 @@ export interface DeviceBinding {
   id: string;
   userId: string;
   codeHash: string;
+  deviceKeyId?: string;
   expiresAt: string;
   consumedAt?: string;
   createdAt: string;
+}
+
+export interface DeviceKey {
+  id: string;
+  userId: string;
+  installationId: string;
+  agreementPublicKey: string;
+  signingPublicKey: string;
+  algorithm: "p256";
+  createdAt: string;
+  lastActiveAt: string;
+  revokedAt?: string;
 }
 
 export interface AgentToken {
@@ -92,6 +105,17 @@ export interface AgentConnection {
   createdAt: string;
   lastUsedAt?: string;
   expiresAt?: string;
+}
+
+export interface DirectConnectionEnvelope {
+  id: string;
+  userId: string;
+  deviceKeyId: string;
+  algorithm: "p256-hkdf-sha256-aes-gcm";
+  ephemeralPublicKey: string;
+  sealedBox: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface EventSchema {
