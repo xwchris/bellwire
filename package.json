@@ -21,17 +21,17 @@
   },
   "dependencies": {
     "hono": "^4.8.5",
-    "jose": "^6.2.3"
+    "jose": "^6.2.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260714.1",
+    "@cloudflare/workers-types": "^5.20260723.1",
     "@eslint/js": "^9.31.0",
     "eslint": "^9.31.0",
     "globals": "^17.7.0",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.38.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^3.2.4",
-    "wrangler": "^4.25.0"
+    "wrangler": "^4.114.0"
   },
   "engines": {
     "node": ">=22"
