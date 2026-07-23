@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
 
 import type { EventSchema, LiveSurface, NotificationSurface, Project } from "../src/domain/models";
@@ -11,6 +12,7 @@ const project: Project = {
   name: "Version project",
   slug: "version-project",
   icon: "bolt",
+  displayOrder: 0,
   category: "test",
   status: "active",
   endpoint: "/v1/events/version-project",
@@ -56,6 +58,7 @@ describe("atomic configuration versioning", () => {
         type: "progress",
         title: "Build",
         content: { percentage: index * 10 },
+        displayOrder: 0,
         version: 1,
         createdAt: timestamp,
         updatedAt: `2026-07-21T08:00:0${index}.000Z`,

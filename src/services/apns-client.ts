@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { importPKCS8, SignJWT } from "jose";
 
 export interface ApnsConfiguration {
   keyId: string;
   teamId: string;
   bundleId: string;
+  urlScheme: string;
   privateKey: string;
   environment: "sandbox" | "production";
 }
@@ -71,7 +73,7 @@ export class ApnsClient {
         },
         eventId: notification.eventId,
         projectId: notification.projectId,
-        deepLink: `bellwire://events/${notification.eventId}`,
+        deepLink: `${this.config.urlScheme}://events/${notification.eventId}`,
         ...(notification.logoUrl ? { projectLogoUrl: notification.logoUrl } : {}),
       }),
     });

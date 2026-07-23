@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import Foundation
 
 struct AuthSession: Codable, Equatable {
@@ -38,6 +39,7 @@ struct ProjectSummary: Codable, Identifiable, Hashable {
     let slug: String
     let icon: String
     let logoUrl: String?
+    let displayOrder: Int
     let category: String
     let status: String
     let endpoint: String
@@ -111,6 +113,7 @@ struct ProjectOverview: Decodable, Identifiable {
     let slug: String
     let icon: String
     let logoUrl: String?
+    let displayOrder: Int
     let category: String
     let status: String
     let endpoint: String
@@ -149,6 +152,7 @@ struct LiveSurfaceRecord: Decodable, Identifiable, Hashable {
     let subtitle: String?
     let content: [String: JSONValue]
     let action: LiveSurfaceAction?
+    let displayOrder: Int
     let version: Int
     let createdAt: String
     let updatedAt: String

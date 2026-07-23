@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
 
 import { readFile } from "node:fs/promises";
 
@@ -64,6 +65,13 @@ async function run(selectedCommand, args) {
       if (Object.keys(body).length === 0) throw new Error("Provide at least one project field to update");
       return apiRequest(`/v1/projects/${encodeURIComponent(projectId)}`, { method: "PATCH", body });
     }
+    case "set-project-order": {
+      const projectId = required(args, "project");
+      return apiRequest(`/v1/projects/${encodeURIComponent(projectId)}/order`, {
+        method: "PATCH",
+        body: { displayOrder: displayOrder(args.order) },
+      });
+    }
     case "delete-project":
       return apiRequest(`/v1/projects/${encodeURIComponent(required(args, "project"))}`, {
         method: "DELETE",
@@ -111,6 +119,11 @@ async function run(selectedCommand, args) {
         ? `/v1/projects/${encodeURIComponent(projectId)}/surfaces`
         : "/v1/surfaces");
     }
+    case "set-surface-order":
+      return apiRequest(
+        `/v1/projects/${encodeURIComponent(required(args, "project"))}/surfaces/${encodeURIComponent(required(args, "key"))}/order`,
+        { method: "PATCH", body: { displayOrder: displayOrder(args.order) } },
+      );
     case "delete-surface":
       return apiRequest(
         `/v1/projects/${encodeURIComponent(required(args, "project"))}/surfaces/${encodeURIComponent(required(args, "key"))}`,
@@ -368,6 +381,17 @@ function validateLogoUrl(value) {
   }
 }
 
+function displayOrder(value) {
+  if (!/^\d+$/u.test(value ?? "")) {
+    throw new Error("--order must be an integer between 0 and 1000000");
+  }
+  const order = Number(value);
+  if (!Number.isSafeInteger(order) || order > 1_000_000) {
+    throw new Error("--order must be an integer between 0 and 1000000");
+  }
+  return order;
+}
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -381,5 +405,5 @@ function printResult(value, json) {
 }
 
 function printHelp() {
-  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]\n  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]\n  delete-project --project <id>\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  delete-surface --project <id> --key <stable-key>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
+  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]\n  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]\n  set-project-order --project <id> --order <integer>\n  delete-project --project <id>\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  set-surface-order --project <id> --key <stable-key> --order <integer>\n  delete-surface --project <id> --key <stable-key>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
 }

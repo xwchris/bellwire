@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 export const EVENT_FIELD_TYPES = [
   "string",
   "number",
@@ -41,6 +42,7 @@ export interface Project {
   slug: string;
   icon: string;
   logoUrl?: string;
+  displayOrder: number;
   category: string;
   status: "active" | "paused";
   endpoint: string;
@@ -134,6 +136,7 @@ export interface LiveSurface {
   subtitle?: string;
   content: Record<string, unknown>;
   action?: LiveSurfaceAction;
+  displayOrder: number;
   version: number;
   createdAt: string;
   updatedAt: string;

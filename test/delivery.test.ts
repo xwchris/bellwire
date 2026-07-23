@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -21,6 +22,7 @@ const project: Project = {
   slug: "bellwire-store",
   icon: "bolt.horizontal",
   logoUrl: "https://cdn.example.com/bellwire.png",
+  displayOrder: 0,
   category: "commerce",
   status: "active",
   endpoint: "/v1/events/project-1",
@@ -425,6 +427,7 @@ describe("APNs client", () => {
       keyId: "KEY123",
       teamId: "TEAM123",
       bundleId: "app.bellwire",
+      urlScheme: "bellwire-self-host",
       privateKey: await privateKeyPEM(),
       environment: "sandbox",
     }, fetchImpl);
@@ -451,7 +454,7 @@ describe("APNs client", () => {
         "thread-id": "payments",
         "mutable-content": 1,
       },
-      deepLink: "bellwire://events/event-123",
+      deepLink: "bellwire-self-host://events/event-123",
       projectLogoUrl: "https://cdn.example.com/project.png",
     });
   });

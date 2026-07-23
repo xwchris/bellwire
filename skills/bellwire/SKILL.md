@@ -48,11 +48,13 @@ Use [scripts/bellwire.mjs](scripts/bellwire.mjs) for API operations. It defaults
 ```bash
 node <skill-dir>/scripts/bellwire.mjs create-project --name "VideoSays" --logo-url "https://videosays.com/logo.png"
 node <skill-dir>/scripts/bellwire.mjs update-project --project <id> --logo-url "https://cdn.example.com/logo.png"
+node <skill-dir>/scripts/bellwire.mjs set-project-order --project <id> --order 10
 node <skill-dir>/scripts/bellwire.mjs delete-project --project <id>
 node <skill-dir>/scripts/bellwire.mjs create-schema --project <id> --file event-spec.json
 node <skill-dir>/scripts/bellwire.mjs create-token --project <id> --name production
 node <skill-dir>/scripts/bellwire.mjs upsert-surface --project <id> --key prod-api --file surface.json
 node <skill-dir>/scripts/bellwire.mjs list-surfaces --project <id>
+node <skill-dir>/scripts/bellwire.mjs set-surface-order --project <id> --key prod-api --order 20
 node <skill-dir>/scripts/bellwire.mjs send-test --project <id> --file test-event.json
 node <skill-dir>/scripts/bellwire.mjs event --event <event-id>
 node <skill-dir>/scripts/bellwire.mjs health --project <id>
@@ -84,6 +86,7 @@ Use `--json` for machine-readable output. Read [api.md](references/api.md) when 
 ## Surface rules
 
 - Reuse a meaningful stable key such as `sales-today`, `prod-api`, or `nightly-backup`.
+- Preserve the assigned `displayOrder` during routine updates. Change it only when the user explicitly asks to reorder a card.
 - Send display-ready values. For example, compute revenue in the source system and send `¥2,430`; Bellwire does not infer business aggregation from raw events.
 - Choose one of the supported native types. Never embed HTML, JavaScript, Swift, CSS, or arbitrary rendering instructions.
 - Prefer a Surface for frequent progress and metric updates; avoid flooding the Event inbox.
