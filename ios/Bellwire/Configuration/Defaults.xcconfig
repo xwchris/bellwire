@@ -1,0 +1,15 @@
+// Public defaults for the official Bellwire build.
+// Copy Local.xcconfig.example to Local.xcconfig to override these values
+// without editing source files. Local.xcconfig is ignored by Git.
+
+BELLWIRE_DEVELOPMENT_TEAM = 98JU6VDJZU
+BELLWIRE_APP_BUNDLE_ID = app.bellwire
+BELLWIRE_EXTENSION_BUNDLE_ID = $(BELLWIRE_APP_BUNDLE_ID).NotificationService
+BELLWIRE_URL_SCHEME = bellwire
+
+// The empty $() keeps // from being parsed as an xcconfig comment.
+BELLWIRE_API_BASE_URL = https:/$()/api.bellwire.app
+BELLWIRE_SUPABASE_URL = https:/$()/cvyidqbjjkfzoxykkbea.supabase.co
+BELLWIRE_SUPABASE_PUBLISHABLE_KEY = sb_publishable_i4iVi9h_EXgBdkxsgOU_Rw_MLV2SIdg
+
+#include? "Local.xcconfig"

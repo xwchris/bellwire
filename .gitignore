@@ -9,6 +9,9 @@ coverage/
 .env
 .env.*
 !.env.example
+.dev.vars
+wrangler.self-host.toml
+ios/Bellwire/Configuration/Local.xcconfig
 *.local
 *.p8
 
