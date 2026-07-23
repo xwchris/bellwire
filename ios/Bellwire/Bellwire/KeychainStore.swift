@@ -7,9 +7,9 @@ struct KeychainStore {
     private let service = AppConfig.keychainService
     private let account = "auth-session"
     private let installationAccount = "installation-id"
-    private let directKeyIDAccount = "direct-key-id-v1"
-    private let directAgreementKeyAccount = "direct-agreement-private-v1"
-    private let directSigningKeyAccount = "direct-signing-private-v1"
+    private let legacyDirectKeyIDAccount = "direct-key-id-v1"
+    private let legacyDirectAgreementKeyAccount = "direct-agreement-private-v1"
+    private let legacyDirectSigningKeyAccount = "direct-signing-private-v1"
 
     func save(_ session: AuthSession) throws {
         let data = try JSONEncoder().encode(session)
@@ -76,7 +76,10 @@ struct KeychainStore {
         return value
     }
 
-    func deviceIdentity() throws -> DeviceIdentity {
+    func deviceIdentity(userID: String) throws -> DeviceIdentity {
+        let directKeyIDAccount = directAccount("key-id", userID: userID)
+        let directAgreementKeyAccount = directAccount("agreement-private", userID: userID)
+        let directSigningKeyAccount = directAccount("signing-private", userID: userID)
         let keyID: String
         if let data = readData(account: directKeyIDAccount),
            let savedID = String(data: data, encoding: .utf8),
@@ -105,6 +108,9 @@ struct KeychainStore {
             try saveData(signingKey.rawRepresentation, account: directSigningKeyAccount)
         }
 
+        deleteData(account: legacyDirectKeyIDAccount)
+        deleteData(account: legacyDirectAgreementKeyAccount)
+        deleteData(account: legacyDirectSigningKeyAccount)
         return DeviceIdentity(id: keyID, agreementKey: agreementKey, signingKey: signingKey)
     }
 
@@ -121,6 +127,27 @@ struct KeychainStore {
     func directConnectionManifests(userID: String) -> [DirectConnectionManifest] {
         guard let data = readData(account: "direct-connections-\(userID)") else { return [] }
         return (try? JSONDecoder().decode([DirectConnectionManifest].self, from: data)) ?? []
+    }
+
+    @discardableResult
+    func deleteDirectConnection(projectID: String, userID: String) throws -> Bool {
+        var manifests = directConnectionManifests(userID: userID)
+        let originalCount = manifests.count
+        manifests.removeAll { $0.project.id == projectID }
+        guard manifests.count != originalCount else { return false }
+        try saveDirectConnectionManifests(manifests, userID: userID)
+        return true
+    }
+
+    func deleteDirectData(userID: String) {
+        deleteData(account: "direct-connections-\(userID)")
+        deleteData(account: directAccount("key-id", userID: userID))
+        deleteData(account: directAccount("agreement-private", userID: userID))
+        deleteData(account: directAccount("signing-private", userID: userID))
+    }
+
+    private func directAccount(_ component: String, userID: String) -> String {
+        "direct-\(component)-v2-\(userID.lowercased())"
     }
 
     private func readData(account: String) -> Data? {
@@ -150,6 +177,14 @@ struct KeychainStore {
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError(status: status) }
+    }
+
+    private func deleteData(account: String) {
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ] as CFDictionary)
     }
 }
 

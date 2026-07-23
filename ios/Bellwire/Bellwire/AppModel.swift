@@ -326,6 +326,13 @@ final class AppModel: ObservableObject {
     }
 
     func deleteProject(id: String) async throws {
+        if let userID = session?.user.id,
+           try keychain.deleteDirectConnection(projectID: id, userID: userID) {
+            projects.removeAll { $0.id == id }
+            liveSurfaces.removeAll { $0.projectId == id }
+            events.removeAll { $0.projectId == id }
+            return
+        }
         try await api.requestVoid("v1/projects/\(id)", method: .delete)
         projects.removeAll { $0.id == id }
         liveSurfaces.removeAll { $0.projectId == id }
@@ -341,7 +348,11 @@ final class AppModel: ObservableObject {
     func deleteAccount() async -> Bool {
         errorMessage = nil
         do {
+            let userID = session?.user.id
             try await api.requestVoid("v1/account", method: .delete)
+            if let userID {
+                keychain.deleteDirectData(userID: userID)
+            }
             signOut()
             return true
         } catch {
@@ -417,11 +428,12 @@ final class AppModel: ObservableObject {
 
     func createBinding() async {
         do {
+            guard let userID = session?.user.id else { throw ClientError.signedOut }
             struct Payload: Encodable {
                 let deviceKey: DeviceKeyDescriptor
             }
             let installationID = try keychain.installationID()
-            let identity = try keychain.deviceIdentity()
+            let identity = try keychain.deviceIdentity(userID: userID)
             let response: BindingResponse = try await api.request(
                 "v1/device-bindings",
                 method: .post,
@@ -572,7 +584,7 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshDirectConnections(userID: String) async {
-        guard let identity = try? keychain.deviceIdentity() else { return }
+        guard let identity = try? keychain.deviceIdentity(userID: userID) else { return }
         var manifests = keychain.directConnectionManifests(userID: userID)
         if let response: DirectConnectionEnvelopesResponse = try? await api.request(
             "v1/direct-connections?deviceKeyId=\(identity.id)"
