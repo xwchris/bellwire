@@ -1,6 +1,8 @@
 # Bellwire App Store 上架计划
 
-更新时间：2026-07-22
+更新时间：2026-07-23
+
+发布状态：已提交 App Store 审核，等待 Apple 审核结果。
 
 ## 发布目标
 
@@ -23,13 +25,15 @@
 - [x] 声明仅使用豁免加密（HTTPS / Apple 系统加密）
 - [x] Worker 源配置已切换为 production APNs
 - [x] Apple Distribution 证书、App Store profile 与 1.0.0 (5) IPA 已生成
-- [ ] 将 Worker 与官网变更部署到生产
-- [ ] 接入 Sign in with Apple token 撤销（删除账户时同步撤销 Apple 授权）
-- [ ] App Store Connect 创建 App 记录并设置销售地区
-- [ ] 完成 App Privacy、年龄分级、出口合规与内容版权问卷
-- [ ] 制作并上传 6.7 英寸 iPhone 截图
-- [ ] 上传 build 5 至 TestFlight，真机验证生产推送
-- [ ] 提交审核
+- [x] 将 Worker 与官网变更部署到生产
+- [x] 接入 Sign in with Apple token 撤销（删除账户时同步撤销 Apple 授权）
+- [x] App Store Connect 创建 App 记录并设置销售地区
+- [x] 完成 App Privacy、年龄分级、出口合规与内容版权问卷
+- [x] 制作并上传 6.7 英寸 iPhone 截图
+- [x] 上传提交审核所用构建版本
+- [x] 提交审核
+- [ ] 使用 TestFlight / App Store 构建在真机验证 production APNs
+- [ ] 跟进 Apple 审核结果与可能的 Resolution Center 回复
 
 ## App Store 元数据草案
 
