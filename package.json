@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:worker": "vitest run --exclude test/ios-preview.test.js",
+    "test:ios": "vitest run test/ios-preview.test.js",
     "test:watch": "vitest",
     "test:live": "node scripts/live-smoke.mjs",
     "self-host:bootstrap": "node scripts/self-host-bootstrap.mjs",
