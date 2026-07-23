@@ -5,6 +5,32 @@
 The Skill contains its own dependency-free CLI. It can target Bellwire Cloud
 or a self-hosted API by setting `BELLWIRE_API_URL`.
 
+## ClawHub
+
+Install the published Skill:
+
+```bash
+clawhub install @xwchris/bellwire
+```
+
+The canonical listing is
+[`xwchris/bellwire`](https://clawhub.ai/xwchris/skills/bellwire). ClawHub
+installations can be refreshed with:
+
+```bash
+clawhub update @xwchris/bellwire
+```
+
+## Release archive
+
+Each GitHub release includes a versioned `bellwire-skill-*.zip` archive and its
+SHA-256 checksum. Download and extract the archive into the skills directory
+used by your Agent:
+
+```bash
+gh release download --repo xwchris/bellwire --pattern 'bellwire-skill-*.zip*'
+```
+
 ## Codex
 
 Clone the repository and link the Skill into the personal Codex skills
@@ -38,8 +64,8 @@ node skills/bellwire/scripts/bellwire.mjs --help
 
 ## Update
 
-Pull the repository with a fast-forward update. A linked installation updates
-immediately:
+For the linked Codex installation, pull the repository with a fast-forward
+update. The linked Skill updates immediately:
 
 ```bash
 git -C bellwire pull --ff-only
