@@ -29,7 +29,7 @@
     "@eslint/js": "^9.31.0",
     "eslint": "^9.31.0",
     "globals": "^17.7.0",
-    "typescript": "^5.8.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.38.0",
     "vitest": "^3.2.4",
     "wrangler": "^4.25.0"
