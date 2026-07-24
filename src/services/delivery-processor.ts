@@ -3,6 +3,7 @@ import type {
   Delivery,
   Device,
   EventSchema,
+  NotificationPreference,
   NotificationSurface,
   Project,
 } from "../domain/models";
@@ -21,6 +22,7 @@ interface DeliveryConfiguration {
   schema?: EventSchema;
   surface?: NotificationSurface;
   devices: Map<string, Device>;
+  notificationPreference: NotificationPreference;
   terminalReason?: string;
 }
 
@@ -115,11 +117,17 @@ export class DeliveryProcessor {
         ]),
       );
       const notification = renderNotification(activeProject, event, surface, fields);
+      const directNotificationRef = readDirectNotificationRef(event.data.directNotificationRef);
       try {
         const sent = await sender.send(device.apnsToken, {
           ...notification,
+          title: configuration.notificationPreference.mode === "hosted_detailed"
+            ? notification.title
+            : activeProject.name,
           eventId: event.id,
           projectId: activeProject.id,
+          privacyMode: configuration.notificationPreference.mode,
+          ...(directNotificationRef ? { directNotificationRef } : {}),
         });
         await this.repository.completeClaimedDelivery({
           ...delivery,
@@ -154,11 +162,18 @@ export class DeliveryProcessor {
     eventType: string,
     project: Project | undefined,
   ): Promise<DeliveryConfiguration> {
-    if (!project) return { devices: new Map(), terminalReason: "ProjectMissing" };
-    const [schema, surface, devices] = await Promise.all([
+    if (!project) {
+      return {
+        devices: new Map(),
+        notificationPreference: defaultNotificationPreference(""),
+        terminalReason: "ProjectMissing",
+      };
+    }
+    const [schema, surface, devices, notificationPreference] = await Promise.all([
       this.repository.getEventSchema(project.id, eventType),
       this.repository.getNotificationSurface(project.id, eventType),
       this.repository.listDevices(project.userId),
+      this.repository.getNotificationPreference(project.userId),
     ]);
     const terminalReason = project.status === "paused"
       ? "ProjectPaused"
@@ -174,9 +189,25 @@ export class DeliveryProcessor {
       ...(schema ? { schema } : {}),
       ...(surface ? { surface } : {}),
       devices: new Map(devices.map((device) => [device.id, device])),
+      notificationPreference: notificationPreference
+        ?? defaultNotificationPreference(project.userId),
       ...(terminalReason ? { terminalReason } : {}),
     };
   }
+}
+
+function defaultNotificationPreference(userId: string): NotificationPreference {
+  return {
+    userId,
+    mode: "local_enrichment",
+    updatedAt: new Date(0).toISOString(),
+  };
+}
+
+function readDirectNotificationRef(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9._~-]{8,200}$/u.test(value)
+    ? value
+    : undefined;
 }
 
 function senderForEnvironment(

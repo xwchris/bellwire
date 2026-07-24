@@ -123,7 +123,7 @@ describe("Bellwire MVP API", () => {
       compatibility: {
         appVersion: "1.0.0",
         apiVersion: "v1",
-        schemaMigration: "202607230003",
+        schemaMigration: "202607240001",
       },
     });
   });
@@ -330,6 +330,45 @@ describe("Bellwire MVP API", () => {
       }),
     });
     expect(invalidEnvironment.status).toBe(400);
+  });
+
+  it("defaults notification privacy to local enrichment and lets the user change it", async () => {
+    const headers = { authorization: "Bearer test", "content-type": "application/json" };
+    const initial = await app.request("/v1/notification-preference", { headers });
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toMatchObject({ mode: "local_enrichment" });
+
+    const updated = await app.request("/v1/notification-preference", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ mode: "generic" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ mode: "generic" });
+
+    const invalid = await app.request("/v1/notification-preference", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ mode: "private-ish" }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
+  it("exposes the current notification mode to the project ingest token", async () => {
+    const projectId = await createProject();
+    const token = await configureProject(projectId);
+    await repository.saveNotificationPreference({
+      userId: userPrincipal.userId,
+      mode: "hosted_detailed",
+      updatedAt: new Date().toISOString(),
+    });
+
+    const response = await app.request(`/v1/events/${projectId}/notification-preference`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ mode: "hosted_detailed" });
   });
 
   it("upserts a typed live Surface by stable key and exposes only the latest state", async () => {

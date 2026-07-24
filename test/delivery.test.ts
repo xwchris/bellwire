@@ -165,6 +165,55 @@ describe("notification delivery", () => {
 
     expect(factory).toHaveBeenCalledWith("sandbox");
     expect(send).toHaveBeenCalledWith(device.apnsToken, expect.any(Object));
+    expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
+      title: project.name,
+      privacyMode: "local_enrichment",
+    }));
+  });
+
+  it("uses a direct reference for local enrichment without sending rendered detail", async () => {
+    const directEvent = {
+      ...event,
+      data: { directNotificationRef: "payment-ref-1234" },
+      sensitiveFields: ["directNotificationRef"],
+    };
+    const directSchema = {
+      ...schema,
+      fields: {
+        directNotificationRef: { type: "string" as const, required: true, sensitive: true },
+      },
+    };
+    const repository = await repositoryWithQueuedDelivery({
+      event: directEvent,
+      schema: directSchema,
+    });
+    const send = vi.fn<ApnsSender["send"]>().mockResolvedValue({});
+
+    await new DeliveryProcessor(repository, { send }).process(directEvent.id);
+
+    expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
+      title: project.name,
+      privacyMode: "local_enrichment",
+      directNotificationRef: "payment-ref-1234",
+    }));
+  });
+
+  it("renders the configured amount only in hosted detailed mode", async () => {
+    const repository = await seededRepository();
+    await repository.saveNotificationPreference({
+      userId: project.userId,
+      mode: "hosted_detailed",
+      updatedAt: timestamp,
+    });
+    const send = vi.fn<ApnsSender["send"]>().mockResolvedValue({});
+
+    await new DeliveryProcessor(repository, { send }).process(event.id);
+
+    expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
+      title: "Payment received",
+      body: "1,234.5 complete",
+      privacyMode: "hosted_detailed",
+    }));
   });
 
   it("does not fall back to an older enabled notification Surface", async () => {
@@ -457,6 +506,7 @@ describe("APNs client", () => {
       eventId: "event-123",
       projectId: "project-123",
       logoUrl: "https://cdn.example.com/project.png",
+      privacyMode: "hosted_detailed",
     });
 
     expect(result).toEqual({ providerMessageId: "provider-123" });
@@ -472,7 +522,50 @@ describe("APNs client", () => {
       },
       deepLink: "bellwire-self-host://events/event-123",
       projectLogoUrl: "https://cdn.example.com/project.png",
+      bellwireNotificationMode: "hosted_detailed",
     });
+  });
+
+  it("sends only a localized generic alert plus an opaque direct reference", async () => {
+    let captured: Request | undefined;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      captured = new Request(input, init);
+      return new Response(null, { status: 200 });
+    };
+    const client = new ApnsClient({
+      keyId: "KEY123",
+      teamId: "TEAM123",
+      bundleId: "app.bellwire",
+      urlScheme: "bellwire",
+      privateKey: await privateKeyPEM(),
+      environment: "production",
+    }, fetchImpl);
+
+    await client.send("abc123", {
+      title: "VideoSays",
+      body: "must not cross APNs",
+      sound: "default",
+      threadId: "payments",
+      priority: "normal",
+      eventId: "event-123",
+      projectId: "project-123",
+      privacyMode: "local_enrichment",
+      directNotificationRef: "payment-ref-1234",
+    });
+
+    const payload = await captured?.json() as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      aps: {
+        alert: {
+          title: "VideoSays",
+          "loc-key": "BELLWIRE_GENERIC_NOTIFICATION_BODY",
+        },
+        "mutable-content": 1,
+      },
+      bellwireNotificationMode: "local_enrichment",
+      directNotificationRef: "payment-ref-1234",
+    });
+    expect(JSON.stringify(payload)).not.toContain("must not cross APNs");
   });
 });
 

@@ -24,6 +24,8 @@
     <string>$(BELLWIRE_SUPABASE_URL)</string>
     <key>BellwireSupabasePublishableKey</key>
     <string>$(BELLWIRE_SUPABASE_PUBLISHABLE_KEY)</string>
+    <key>BellwireKeychainAccessGroup</key>
+    <string>$(AppIdentifierPrefix)$(BELLWIRE_APP_BUNDLE_ID).shared</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

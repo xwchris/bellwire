@@ -64,6 +64,20 @@ export interface Device {
   createdAt: string;
 }
 
+export const NOTIFICATION_PRIVACY_MODES = [
+  "generic",
+  "local_enrichment",
+  "hosted_detailed",
+] as const;
+
+export type NotificationPrivacyMode = (typeof NOTIFICATION_PRIVACY_MODES)[number];
+
+export interface NotificationPreference {
+  userId: string;
+  mode: NotificationPrivacyMode;
+  updatedAt: string;
+}
+
 export interface DeviceBinding {
   id: string;
   userId: string;

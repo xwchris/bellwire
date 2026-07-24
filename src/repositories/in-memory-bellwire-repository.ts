@@ -13,6 +13,7 @@ import type {
   EventSchema,
   IngestToken,
   LiveSurface,
+  NotificationPreference,
   NotificationSurface,
   Project,
 } from "../domain/models";
@@ -29,6 +30,7 @@ function copy<T>(value: T): T {
 export class InMemoryBellwireRepository implements BellwireRepository {
   private readonly projects = new Map<string, Project>();
   private readonly devices = new Map<string, Device>();
+  private readonly notificationPreferences = new Map<string, NotificationPreference>();
   private readonly deviceBindings = new Map<string, DeviceBinding>();
   private readonly deviceKeys = new Map<string, DeviceKey>();
   private readonly directConnectionEnvelopes = new Map<string, DirectConnectionEnvelope>();
@@ -59,6 +61,7 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     for (const [tokenId, token] of this.agentTokens) {
       if (token.userId === userId) this.agentTokens.delete(tokenId);
     }
+    this.notificationPreferences.delete(userId);
     this.appleRefreshTokens.delete(userId);
   }
 
@@ -165,6 +168,17 @@ export class InMemoryBellwireRepository implements BellwireRepository {
 
   async deleteDevice(deviceId: string): Promise<void> {
     this.devices.delete(deviceId);
+  }
+
+  async getNotificationPreference(userId: string): Promise<NotificationPreference | undefined> {
+    return this.cloneFrom(this.notificationPreferences, userId);
+  }
+
+  async saveNotificationPreference(
+    preference: NotificationPreference,
+  ): Promise<NotificationPreference> {
+    this.notificationPreferences.set(preference.userId, copy(preference));
+    return copy(preference);
   }
 
   async saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding> {

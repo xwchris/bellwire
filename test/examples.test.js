@@ -17,7 +17,7 @@ describe("public integration examples", () => {
     const specFiles = readdirSync(templatesRoot)
       .filter((name) => name.endsWith(".event-spec.json"))
       .sort();
-    expect(specFiles).toHaveLength(3);
+    expect(specFiles).toHaveLength(4);
 
     for (const specFile of specFiles) {
       const validation = spawnSync(

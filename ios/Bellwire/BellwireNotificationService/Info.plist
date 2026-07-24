@@ -20,6 +20,8 @@
     <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>BellwireKeychainAccessGroup</key>
+    <string>$(AppIdentifierPrefix)$(BELLWIRE_APP_BUNDLE_ID).shared</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key>

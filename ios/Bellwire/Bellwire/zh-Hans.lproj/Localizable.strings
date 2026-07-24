@@ -10,6 +10,15 @@
 "Changes Bellwire between light and dark appearance" = "切换 Bellwire 的浅色或深色外观";
 "Light" = "浅色";
 "Dark" = "深色";
+"Notification privacy" = "通知隐私";
+"Choose how notification details reach this iPhone" = "选择通知详情如何到达这台 iPhone";
+"Generic only" = "仅通用提醒";
+"Private details" = "本地获取详情";
+"Detailed via Bellwire" = "经 Bellwire 发送详情";
+"Lock Screen hides details. Open Bellwire to view updates." = "锁屏不显示详情，打开 Bellwire 后查看更新。";
+"Your iPhone fetches details directly before showing the notification." = "iPhone 会在展示通知前直接从项目服务获取详情。";
+"Most reliable. Notification details pass through Bellwire and APNs." = "最可靠，但通知详情会经过 Bellwire 和 APNs。";
+"BELLWIRE_GENERIC_NOTIFICATION_BODY" = "有一条新动态。";
 "Support" = "支持";
 "Send feedback" = "发送反馈";
 "Help improve Bellwire" = "告诉我们哪里可以做得更好";

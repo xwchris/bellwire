@@ -6,6 +6,8 @@ enum AppConfig {
     static let supabaseURL = requiredURL(for: "BellwireSupabaseURL")
     static let supabasePublishableKey = requiredValue(for: "BellwireSupabasePublishableKey")
     static let keychainService = "\(Bundle.main.bundleIdentifier ?? "app.bellwire").session"
+    static let sharedDirectKeychainService = "app.bellwire.direct-shared"
+    static let keychainAccessGroup = requiredValue(for: "BellwireKeychainAccessGroup")
 
     private static func requiredURL(for key: String) -> URL {
         let value = requiredValue(for: key)

@@ -11,6 +11,10 @@ iPhone without Bellwire storing or reading the payload.
    Store one record per device and support explicit revocation.
 3. Implement an HTTPS `GET` endpoint that returns the standard
    `{ "surfaces": [...] }` response. Keep the response below 1 MB.
+   To support private Lock Screen details, also implement `notificationPath`.
+   Bellwire appends an opaque `ref` query parameter and expects a response
+   below 64 KB containing `title`, `body`, and optional `subtitle` and
+   `logoUrl`.
 4. Verify every request with
    [verify-direct-request.mjs](../scripts/verify-direct-request.mjs). Persist each
    nonce atomically with a unique constraint and reject timestamps outside five
@@ -58,9 +62,23 @@ Use HTTPS without embedded credentials. Return `401` for invalid keys,
 signatures, timestamps, or reused nonces. Never fall back to an unsigned
 response.
 
-## Notification boundary
+## Notification privacy modes
 
-Bellwire Direct protects card payloads. Until encrypted push envelopes are
-enabled, send only generic, non-sensitive notification text through hosted
-Events, such as `VideoSays has new activity`. Do not include revenue, customer,
-order, credential, or free-form content in the hosted Event.
+Read `GET /v1/events/:projectId/notification-preference` with the project Ingest
+Token before sending private events. If the mode is `generic` or
+`local_enrichment`, send only a generic Event with a stable, opaque
+`directNotificationRef` field and store the matching detail on the user's
+service. Mark that field sensitive in the Event Schema.
+
+- `generic`: Bellwire and APNs receive only a generic alert. The extension does
+  not fetch notification detail.
+- `local_enrichment` (default): Bellwire and APNs receive the same generic
+  alert and opaque reference. Before presentation, the iPhone signs a request
+  to `notificationPath`, fetches the detail directly, and rewrites the Lock
+  Screen notification. Failure falls back to the generic alert.
+- `hosted_detailed`: send the existing detailed Event. Bellwire renders and
+  relays the title and body through APNs.
+
+If the preference request fails, default to `local_enrichment` and do not send
+private values to Bellwire. Never include revenue, customer, order, credential,
+or free-form content in a generic or local-enrichment Event.

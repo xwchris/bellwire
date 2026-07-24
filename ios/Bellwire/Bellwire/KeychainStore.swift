@@ -10,6 +10,7 @@ struct KeychainStore {
     private let legacyDirectKeyIDAccount = "direct-key-id-v1"
     private let legacyDirectAgreementKeyAccount = "direct-agreement-private-v1"
     private let legacyDirectSigningKeyAccount = "direct-signing-private-v1"
+    private let sharedDirectContextAccount = "notification-context-v1"
 
     func save(_ session: AuthSession) throws {
         let data = try JSONEncoder().encode(session)
@@ -81,31 +82,31 @@ struct KeychainStore {
         let directAgreementKeyAccount = directAccount("agreement-private", userID: userID)
         let directSigningKeyAccount = directAccount("signing-private", userID: userID)
         let keyID: String
-        if let data = readData(account: directKeyIDAccount),
+        if let data = readDirectData(account: directKeyIDAccount),
            let savedID = String(data: data, encoding: .utf8),
            UUID(uuidString: savedID) != nil {
             keyID = savedID.lowercased()
         } else {
             keyID = UUID().uuidString.lowercased()
-            try saveData(Data(keyID.utf8), account: directKeyIDAccount)
+            try saveDirectData(Data(keyID.utf8), account: directKeyIDAccount)
         }
 
         let agreementKey: P256.KeyAgreement.PrivateKey
-        if let data = readData(account: directAgreementKeyAccount),
+        if let data = readDirectData(account: directAgreementKeyAccount),
            let savedKey = try? P256.KeyAgreement.PrivateKey(rawRepresentation: data) {
             agreementKey = savedKey
         } else {
             agreementKey = P256.KeyAgreement.PrivateKey()
-            try saveData(agreementKey.rawRepresentation, account: directAgreementKeyAccount)
+            try saveDirectData(agreementKey.rawRepresentation, account: directAgreementKeyAccount)
         }
 
         let signingKey: P256.Signing.PrivateKey
-        if let data = readData(account: directSigningKeyAccount),
+        if let data = readDirectData(account: directSigningKeyAccount),
            let savedKey = try? P256.Signing.PrivateKey(rawRepresentation: data) {
             signingKey = savedKey
         } else {
             signingKey = P256.Signing.PrivateKey()
-            try saveData(signingKey.rawRepresentation, account: directSigningKeyAccount)
+            try saveDirectData(signingKey.rawRepresentation, account: directSigningKeyAccount)
         }
 
         deleteData(account: legacyDirectKeyIDAccount)
@@ -118,14 +119,14 @@ struct KeychainStore {
         _ manifests: [DirectConnectionManifest],
         userID: String
     ) throws {
-        try saveData(
+        try saveDirectData(
             JSONEncoder().encode(manifests),
             account: "direct-connections-\(userID)"
         )
     }
 
     func directConnectionManifests(userID: String) -> [DirectConnectionManifest] {
-        guard let data = readData(account: "direct-connections-\(userID)") else { return [] }
+        guard let data = readDirectData(account: "direct-connections-\(userID)") else { return [] }
         return (try? JSONDecoder().decode([DirectConnectionManifest].self, from: data)) ?? []
     }
 
@@ -140,10 +141,30 @@ struct KeychainStore {
     }
 
     func deleteDirectData(userID: String) {
-        deleteData(account: "direct-connections-\(userID)")
-        deleteData(account: directAccount("key-id", userID: userID))
-        deleteData(account: directAccount("agreement-private", userID: userID))
-        deleteData(account: directAccount("signing-private", userID: userID))
+        deleteDirectData(account: "direct-connections-\(userID)")
+        deleteDirectData(account: directAccount("key-id", userID: userID))
+        deleteDirectData(account: directAccount("agreement-private", userID: userID))
+        deleteDirectData(account: directAccount("signing-private", userID: userID))
+        deleteDirectData(account: sharedDirectContextAccount)
+    }
+
+    func deleteDirectNotificationContext() {
+        deleteDirectData(account: sharedDirectContextAccount)
+    }
+
+    func saveDirectNotificationContext(
+        manifests: [DirectConnectionManifest],
+        identity: DeviceIdentity
+    ) throws {
+        let context = SharedDirectNotificationContext(
+            keyID: identity.id,
+            signingPrivateKey: identity.signingKey.rawRepresentation.base64EncodedString(),
+            manifests: manifests
+        )
+        try saveDirectData(
+            JSONEncoder().encode(context),
+            account: sharedDirectContextAccount
+        )
     }
 
     private func directAccount(_ component: String, userID: String) -> String {
@@ -165,12 +186,44 @@ struct KeychainStore {
         return result as? Data
     }
 
+    private func readDirectData(account: String) -> Data? {
+        if let shared = readData(
+            account: account,
+            service: AppConfig.sharedDirectKeychainService,
+            accessGroup: AppConfig.keychainAccessGroup
+        ) {
+            return shared
+        }
+        guard let legacy = readData(account: account) else { return nil }
+        try? saveDirectData(legacy, account: account)
+        deleteData(account: account)
+        return legacy
+    }
+
     private func saveData(_ data: Data, account: String) throws {
+        try saveData(data, account: account, service: service, accessGroup: nil)
+    }
+
+    private func saveDirectData(_ data: Data, account: String) throws {
+        try saveData(
+            data,
+            account: account,
+            service: AppConfig.sharedDirectKeychainService,
+            accessGroup: AppConfig.keychainAccessGroup
+        )
+    }
+
+    private func saveData(
+        _ data: Data,
+        account: String,
+        service selectedService: String,
+        accessGroup: String?
+    ) throws {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: selectedService,
             kSecAttrAccount as String: account
-        ]
+        ].merging(accessGroup.map { [kSecAttrAccessGroup as String: $0] } ?? [:]) { current, _ in current }
         SecItemDelete(base as CFDictionary)
         var query = base
         query[kSecValueData as String] = data
@@ -186,6 +239,47 @@ struct KeychainStore {
             kSecAttrAccount as String: account
         ] as CFDictionary)
     }
+
+    private func deleteDirectData(account: String) {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: AppConfig.sharedDirectKeychainService,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: AppConfig.keychainAccessGroup
+        ]
+        SecItemDelete(query as CFDictionary)
+        query.removeValue(forKey: kSecAttrAccessGroup as String)
+        query[kSecAttrService as String] = service
+        SecItemDelete(query as CFDictionary)
+    }
+
+    private func readData(
+        account: String,
+        service selectedService: String,
+        accessGroup: String?
+    ) -> Data? {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: selectedService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        if let accessGroup {
+            query[kSecAttrAccessGroup as String] = accessGroup
+        }
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
+            return nil
+        }
+        return result as? Data
+    }
+}
+
+private struct SharedDirectNotificationContext: Codable {
+    let keyID: String
+    let signingPrivateKey: String
+    let manifests: [DirectConnectionManifest]
 }
 
 struct DeviceIdentity {

@@ -380,6 +380,7 @@
 		}; name = Release; };
 		C30000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
 			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_ENTITLEMENTS = BellwireNotificationService/BellwireNotificationService.entitlements;
 			CODE_SIGN_STYLE = Automatic;
 			CURRENT_PROJECT_VERSION = 6;
 			DEVELOPMENT_TEAM = "$(BELLWIRE_DEVELOPMENT_TEAM)";
@@ -398,6 +399,7 @@
 		}; name = Debug; };
 		C30000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
 			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_ENTITLEMENTS = BellwireNotificationService/BellwireNotificationService.entitlements;
 			CODE_SIGN_STYLE = Automatic;
 			CURRENT_PROJECT_VERSION = 6;
 			DEVELOPMENT_TEAM = "$(BELLWIRE_DEVELOPMENT_TEAM)";

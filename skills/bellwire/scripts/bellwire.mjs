@@ -301,6 +301,16 @@ function validateDirectConnectionManifest(value) {
   if (!nonEmpty(value.surfacesPath) || !value.surfacesPath.startsWith("/") || value.surfacesPath.startsWith("//")) {
     throw new Error("surfacesPath must be an absolute URL path");
   }
+  if (
+    value.notificationPath !== undefined
+    && (
+      !nonEmpty(value.notificationPath)
+      || !value.notificationPath.startsWith("/")
+      || value.notificationPath.startsWith("//")
+    )
+  ) {
+    throw new Error("notificationPath must be an absolute URL path");
+  }
   if (!isRecord(value.project)) throw new Error("project is required");
   bounded(value.project.id, "project.id", 120, true);
   bounded(value.project.name, "project.name", 120, true);

@@ -99,6 +99,21 @@ export function createApp(dependencies: {
     return context.json(await dependencies.service.listDevices(principal));
   });
 
+  app.get("/v1/notification-preference", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    return context.json(await dependencies.service.getNotificationPreference(principal));
+  });
+
+  app.patch("/v1/notification-preference", async (context) => {
+    const principal = await authenticate(context, dependencies.authenticator);
+    return context.json(
+      await dependencies.service.updateNotificationPreference(
+        principal,
+        await readJson(context.req.raw),
+      ),
+    );
+  });
+
   app.delete("/v1/devices/:deviceId", async (context) => {
     const principal = await authenticate(context, dependencies.authenticator);
     await dependencies.service.deleteDevice(principal, context.req.param("deviceId"));
@@ -276,6 +291,15 @@ export function createApp(dependencies: {
       (await readJson(context.req.raw)) as IngestEventInput,
     );
     return context.json(accepted, accepted.deduplicated ? 200 : 201);
+  });
+
+  app.get("/v1/events/:projectId/notification-preference", async (context) => {
+    return context.json(
+      await dependencies.service.getProjectNotificationPreference(
+        context.req.param("projectId"),
+        context.req.header("authorization"),
+      ),
+    );
   });
 
   app.post("/v1/projects/:projectId/events/test", async (context) => {

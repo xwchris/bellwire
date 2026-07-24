@@ -10,6 +10,15 @@
 "Changes Bellwire between light and dark appearance" = "Changes Bellwire between light and dark appearance";
 "Light" = "Light";
 "Dark" = "Dark";
+"Notification privacy" = "Notification privacy";
+"Choose how notification details reach this iPhone" = "Choose how notification details reach this iPhone";
+"Generic only" = "Generic only";
+"Private details" = "Private details";
+"Detailed via Bellwire" = "Detailed via Bellwire";
+"Lock Screen hides details. Open Bellwire to view updates." = "Lock Screen hides details. Open Bellwire to view updates.";
+"Your iPhone fetches details directly before showing the notification." = "Your iPhone fetches details directly before showing the notification.";
+"Most reliable. Notification details pass through Bellwire and APNs." = "Most reliable. Notification details pass through Bellwire and APNs.";
+"BELLWIRE_GENERIC_NOTIFICATION_BODY" = "New activity is ready.";
 "Support" = "Support";
 "Send feedback" = "Send feedback";
 "Help improve Bellwire" = "Help improve Bellwire";

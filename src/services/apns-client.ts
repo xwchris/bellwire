@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { importPKCS8, SignJWT } from "jose";
+import type { NotificationPrivacyMode } from "../domain/models";
 
 export interface ApnsConfiguration {
   keyId: string;
@@ -20,6 +21,8 @@ export interface ApnsNotification {
   eventId: string;
   projectId: string;
   logoUrl?: string;
+  privacyMode: NotificationPrivacyMode;
+  directNotificationRef?: string;
 }
 
 export interface ApnsResult {
@@ -62,18 +65,32 @@ export class ApnsClient {
       },
       body: JSON.stringify({
         aps: {
-          alert: {
-            title: notification.title,
-            body: notification.body,
-            ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
-          },
+          alert: notification.privacyMode === "hosted_detailed"
+            ? {
+                title: notification.title,
+                body: notification.body,
+                ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
+              }
+            : {
+                title: notification.title,
+                "loc-key": "BELLWIRE_GENERIC_NOTIFICATION_BODY",
+              },
           sound: notification.sound,
           "thread-id": notification.threadId,
-          ...(notification.logoUrl ? { "mutable-content": 1 } : {}),
+          ...(notification.logoUrl || (
+              notification.privacyMode === "local_enrichment"
+              && notification.directNotificationRef
+            )
+            ? { "mutable-content": 1 }
+            : {}),
         },
         eventId: notification.eventId,
         projectId: notification.projectId,
         deepLink: `${this.config.urlScheme}://events/${notification.eventId}`,
+        bellwireNotificationMode: notification.privacyMode,
+        ...(notification.privacyMode === "local_enrichment" && notification.directNotificationRef
+          ? { directNotificationRef: notification.directNotificationRef }
+          : {}),
         ...(notification.logoUrl ? { projectLogoUrl: notification.logoUrl } : {}),
       }),
     });

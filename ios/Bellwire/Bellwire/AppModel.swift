@@ -32,6 +32,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var agentConnections: [AgentConnectionRecord] = []
     @Published private(set) var revokingAgentConnectionID: String?
     @Published private(set) var notificationPermission: NotificationPermissionState = .unknown
+    @Published private(set) var notificationPrivacyMode: NotificationPrivacyMode = .localEnrichment
+    @Published private(set) var isUpdatingNotificationPrivacy = false
     @Published private(set) var isLoading = false
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isMarkingAllRead = false
@@ -258,18 +260,23 @@ final class AppModel: ObservableObject {
             async let inboxRequest: InboxResponse = api.request("v1/inbox?limit=60")
             async let deviceRequest: DevicesResponse = api.request("v1/devices")
             async let connectionRequest: AgentConnectionsResponse = api.request("v1/agent-connections")
+            async let notificationPreferenceRequest: NotificationPreferenceRecord = api.request(
+                "v1/notification-preference"
+            )
             let (
                 projectResponse,
                 surfaceResponse,
                 inboxResponse,
                 deviceResponse,
-                connectionResponse
+                connectionResponse,
+                notificationPreference
             ) = try await (
                 projectRequest,
                 surfaceRequest,
                 inboxRequest,
                 deviceRequest,
-                connectionRequest
+                connectionRequest,
+                notificationPreferenceRequest
             )
             guard !Task.isCancelled, session?.user.id == userID else { return }
             let orderedProjects = projectResponse.projects.sorted(by: stableProjectOrder)
@@ -292,6 +299,7 @@ final class AppModel: ObservableObject {
             events = inboxResponse.events
             devices = deviceResponse.devices
             agentConnections = connectionResponse.connections
+            notificationPrivacyMode = notificationPreference.mode
             lastDashboardRefreshAt = Date()
             errorMessage = nil
             await refreshDirectConnections(userID: userID)
@@ -517,6 +525,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func setNotificationPrivacyMode(_ mode: NotificationPrivacyMode) async {
+        guard mode != notificationPrivacyMode, !isUpdatingNotificationPrivacy else { return }
+        let previous = notificationPrivacyMode
+        notificationPrivacyMode = mode
+        isUpdatingNotificationPrivacy = true
+        defer { isUpdatingNotificationPrivacy = false }
+        do {
+            let saved: NotificationPreferenceRecord = try await api.request(
+                "v1/notification-preference",
+                method: .patch,
+                body: UpdateNotificationPreferencePayload(mode: mode)
+            )
+            notificationPrivacyMode = saved.mode
+            BellwireHaptics.selection()
+        } catch {
+            notificationPrivacyMode = previous
+            errorMessage = friendlyMessage(error)
+        }
+    }
+
     func refreshNotificationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         switch settings.authorizationStatus {
@@ -554,12 +582,14 @@ final class AppModel: ObservableObject {
         dashboardLoadID = nil
         sessionRefreshTask = nil
         keychain.delete()
+        keychain.deleteDirectNotificationContext()
         session = nil
         projects = []
         liveSurfaces = []
         events = []
         devices = []
         agentConnections = []
+        notificationPrivacyMode = .localEnrichment
         revokingAgentConnectionID = nil
         binding = nil
         pendingEventID = nil
@@ -647,6 +677,10 @@ final class AppModel: ObservableObject {
                 manifests.append(manifest)
                 do {
                     try keychain.saveDirectConnectionManifests(manifests, userID: userID)
+                    try keychain.saveDirectNotificationContext(
+                        manifests: manifests,
+                        identity: identity
+                    )
                     try await api.requestVoid(
                         "v1/direct-connections/\(envelope.id)",
                         method: .delete
@@ -656,6 +690,11 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+
+        try? keychain.saveDirectNotificationContext(
+            manifests: manifests,
+            identity: identity
+        )
 
         for manifest in manifests {
             guard let result = try? await fetchDirectSurfaces(

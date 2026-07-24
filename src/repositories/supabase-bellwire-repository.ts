@@ -13,6 +13,7 @@ import type {
   EventSchema,
   IngestToken,
   LiveSurface,
+  NotificationPreference,
   NotificationSurface,
   Project,
 } from "../domain/models";
@@ -171,6 +172,29 @@ export class SupabaseBellwireRepository implements BellwireRepository {
 
   async deleteDevice(deviceId: string): Promise<void> {
     await this.request(`/devices?${params({ id: `eq.${deviceId}` })}`, { method: "DELETE" });
+  }
+
+  async getNotificationPreference(userId: string): Promise<NotificationPreference | undefined> {
+    return this.one(
+      "/notification_preferences",
+      { user_id: `eq.${userId}` },
+      toNotificationPreference,
+    );
+  }
+
+  async saveNotificationPreference(
+    preference: NotificationPreference,
+  ): Promise<NotificationPreference> {
+    const rows = await this.request<JsonRecord[]>("/notification_preferences?on_conflict=user_id", {
+      method: "POST",
+      body: {
+        user_id: preference.userId,
+        mode: preference.mode,
+        updated_at: preference.updatedAt,
+      },
+      prefer: "resolution=merge-duplicates,return=representation",
+    });
+    return toNotificationPreference(requiredFirst(rows));
   }
 
   async saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding> {
@@ -756,6 +780,17 @@ function toDeviceBinding(row: JsonRecord): DeviceBinding {
     deviceKeyId: optionalString(row.device_key_id),
     expiresAt: String(row.expires_at), consumedAt: optionalString(row.consumed_at),
     createdAt: String(row.created_at),
+  };
+}
+
+function toNotificationPreference(row: JsonRecord): NotificationPreference {
+  const mode = String(row.mode);
+  return {
+    userId: String(row.user_id),
+    mode: mode === "generic" || mode === "hosted_detailed"
+      ? mode
+      : "local_enrichment",
+    updatedAt: String(row.updated_at),
   };
 }
 

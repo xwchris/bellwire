@@ -1,0 +1,17 @@
+{
+  "eventType": "payment.available",
+  "fields": {
+    "directNotificationRef": {
+      "type": "string",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "notification": {
+    "title": "VideoSays",
+    "body": "New private activity is ready.",
+    "sound": "default",
+    "group": "payments",
+    "priority": "normal"
+  }
+}

@@ -226,6 +226,41 @@ struct SettingsView: View {
                     )
                 }
                 Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
+                Menu {
+                    ForEach(NotificationPrivacyMode.allCases) { mode in
+                        Button {
+                            Task { await model.setNotificationPrivacyMode(mode) }
+                        } label: {
+                            if model.notificationPrivacyMode == mode {
+                                Label {
+                                    Text(mode.title)
+                                } icon: {
+                                    Image(systemName: "checkmark")
+                                }
+                            } else {
+                                Text(mode.title)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsRowView(
+                        icon: "hand.raised.fill",
+                        title: "Notification privacy",
+                        hint: "Choose how notification details reach this iPhone"
+                    ) {
+                        if model.isUpdatingNotificationPrivacy {
+                            ProgressView().tint(BellwireTheme.accent)
+                        } else {
+                            settingSelectionLabel(model.notificationPrivacyMode.title)
+                        }
+                    }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .disabled(model.isUpdatingNotificationPrivacy)
+                .accessibilityLabel("Notification privacy")
+                .accessibilityValue(Text(model.notificationPrivacyMode.title))
+                .accessibilityHint(Text(model.notificationPrivacyMode.hint))
+                Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
                 Button { openSystemSettings() } label: {
                     SettingsRowView(
                         icon: "gearshape",
@@ -241,6 +276,11 @@ struct SettingsView: View {
             }
             .padding(.horizontal, BellwireSpacing.standard)
             .bellwireSurface()
+
+            Text(model.notificationPrivacyMode.hint)
+                .font(.caption)
+                .foregroundStyle(BellwireTheme.mutedInk)
+                .padding(.horizontal, BellwireSpacing.standard)
         }
     }
 

@@ -16,6 +16,7 @@ import {
   type LiveSurface,
   type LiveSurfaceAction,
   type LiveSurfaceType,
+  type NotificationPrivacyMode,
   type NotificationSurface,
   type Principal,
   type Project,
@@ -261,6 +262,35 @@ export class BellwireService {
 
   async listDevices(principal: Principal) {
     return { devices: await this.repository.listDevices(principal.userId) };
+  }
+
+  async getNotificationPreference(principal: Principal) {
+    this.requireSignedInUser(principal);
+    return this.notificationPreference(principal.userId);
+  }
+
+  async updateNotificationPreference(principal: Principal, input: unknown) {
+    this.requireSignedInUser(principal);
+    const mode = readNotificationPrivacyMode(asRecord(input).mode);
+    if (!mode) {
+      throw invalidRequest(
+        "Notification mode must be generic, local_enrichment, or hosted_detailed",
+      );
+    }
+    return this.repository.saveNotificationPreference({
+      userId: principal.userId,
+      mode,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async getProjectNotificationPreference(
+    projectId: string,
+    bearerToken: string | undefined,
+  ) {
+    const project = await this.requireProject(projectId);
+    await this.requireIngestToken(projectId, bearerToken);
+    return this.notificationPreference(project.userId);
   }
 
   async deleteDevice(principal: Principal, deviceId: string): Promise<void> {
@@ -868,6 +898,14 @@ export class BellwireService {
     return project;
   }
 
+  private async notificationPreference(userId: string) {
+    return (await this.repository.getNotificationPreference(userId)) ?? {
+      userId,
+      mode: "local_enrichment" as const,
+      updatedAt: new Date(0).toISOString(),
+    };
+  }
+
   private async requireIngestToken(projectId: string, bearerToken: string | undefined) {
     await this.requireProject(projectId);
     const rawToken = readBearerToken(bearerToken);
@@ -897,6 +935,12 @@ export class BellwireService {
 
 function deliveryHealthWindowStart(): string {
   return new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+}
+
+function readNotificationPrivacyMode(value: unknown): NotificationPrivacyMode | undefined {
+  return value === "generic" || value === "local_enrichment" || value === "hosted_detailed"
+    ? value
+    : undefined;
 }
 
 function eventSensitiveFields(event: BellwireEvent): string[] {

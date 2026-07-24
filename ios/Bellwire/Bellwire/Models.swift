@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import Foundation
+import SwiftUI
 
 struct AuthSession: Codable, Equatable {
     let accessToken: String
@@ -334,6 +335,42 @@ struct DeviceRecord: Decodable, Identifiable {
     let pushEnabled: Bool
 }
 
+enum NotificationPrivacyMode: String, Codable, CaseIterable, Identifiable {
+    case generic
+    case localEnrichment = "local_enrichment"
+    case hostedDetailed = "hosted_detailed"
+
+    var id: String { rawValue }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .generic: return "Generic only"
+        case .localEnrichment: return "Private details"
+        case .hostedDetailed: return "Detailed via Bellwire"
+        }
+    }
+
+    var hint: LocalizedStringKey {
+        switch self {
+        case .generic:
+            return "Lock Screen hides details. Open Bellwire to view updates."
+        case .localEnrichment:
+            return "Your iPhone fetches details directly before showing the notification."
+        case .hostedDetailed:
+            return "Most reliable. Notification details pass through Bellwire and APNs."
+        }
+    }
+}
+
+struct NotificationPreferenceRecord: Decodable {
+    let mode: NotificationPrivacyMode
+    let updatedAt: String
+}
+
+struct UpdateNotificationPreferencePayload: Encodable {
+    let mode: NotificationPrivacyMode
+}
+
 struct DevicesResponse: Decodable {
     let devices: [DeviceRecord]
 }
@@ -375,6 +412,7 @@ struct DirectConnectionManifest: Codable, Identifiable {
     let connectionId: String
     let baseUrl: String
     let surfacesPath: String
+    let notificationPath: String?
     let project: DirectProjectManifest
 
     var id: String { connectionId }
@@ -389,6 +427,25 @@ struct DirectConnectionManifest: Codable, Identifiable {
               !surfacesPath.hasPrefix("//")
         else { return nil }
         return URL(string: surfacesPath, relativeTo: base)?.absoluteURL
+    }
+
+    func notificationURL(reference: String) -> URL? {
+        guard version == 1,
+              let notificationPath,
+              let base = URL(string: baseUrl),
+              base.scheme?.lowercased() == "https",
+              base.user == nil,
+              base.password == nil,
+              notificationPath.hasPrefix("/"),
+              !notificationPath.hasPrefix("//"),
+              let rawURL = URL(string: notificationPath, relativeTo: base)?.absoluteURL,
+              var components = URLComponents(url: rawURL, resolvingAgainstBaseURL: false)
+        else { return nil }
+        var queryItems = components.queryItems ?? []
+        queryItems.removeAll { $0.name == "ref" }
+        queryItems.append(URLQueryItem(name: "ref", value: reference))
+        components.queryItems = queryItems
+        return components.url
     }
 }
 

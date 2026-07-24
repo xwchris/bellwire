@@ -13,6 +13,7 @@ import type {
   EventSchema,
   IngestToken,
   LiveSurface,
+  NotificationPreference,
   NotificationSurface,
   Project,
 } from "../domain/models";
@@ -44,6 +45,11 @@ export interface BellwireRepository {
   getDevice(deviceId: string): Promise<Device | undefined>;
   listDevices(userId: string): Promise<Device[]>;
   deleteDevice(deviceId: string): Promise<void>;
+
+  getNotificationPreference(userId: string): Promise<NotificationPreference | undefined>;
+  saveNotificationPreference(
+    preference: NotificationPreference,
+  ): Promise<NotificationPreference>;
 
   saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding>;
   findDeviceBindingByCodeHash(codeHash: string): Promise<DeviceBinding | undefined>;

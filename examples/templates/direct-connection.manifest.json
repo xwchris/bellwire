@@ -3,6 +3,7 @@
   "connectionId": "videosays-device-connection",
   "baseUrl": "https://videosays.com",
   "surfacesPath": "/api/bellwire/v1/surfaces",
+  "notificationPath": "/api/bellwire/v1/notifications",
   "project": {
     "id": "videosays-direct",
     "name": "VideoSays",
