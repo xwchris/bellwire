@@ -5,12 +5,14 @@ import MessageUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var purchaseManager: PurchaseManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openURL) private var openURL
     @State private var isGeneratingBinding = false
     @State private var showsAgentInstructions = false
     @State private var showsSignOutConfirmation = false
     @State private var showsDeleteAccountPage = false
+    @State private var showsPaywall = false
     @State private var showsFeedbackMail = false
     @State private var showsFeedbackFallback = false
     @State private var feedbackEmailCopied = false
@@ -28,6 +30,7 @@ struct SettingsView: View {
                         .accessibilityAddTraits(.isHeader)
 
                     accountCard
+                    proSection
                     connectionSection
                     notificationsSection
                     appPreferencesSection
@@ -71,6 +74,10 @@ struct SettingsView: View {
                     subject: "Bellwire Feedback",
                     body: feedbackBody
                 )
+            }
+            .fullScreenCover(isPresented: $showsPaywall) {
+                PaywallView(appAccountToken: model.session.flatMap { UUID(uuidString: $0.user.id) })
+                    .environmentObject(purchaseManager)
             }
             .alert("Feedback unavailable", isPresented: $showsFeedbackFallback) {
                 Button("Copy email") {
@@ -136,6 +143,72 @@ struct SettingsView: View {
         .padding(BellwireSpacing.standard)
         .bellwireSurface()
         .accessibilityElement(children: .combine)
+    }
+
+    private var proSection: some View {
+        Button {
+            showsPaywall = true
+        } label: {
+            HStack(spacing: BellwireSpacing.standard) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: BellwireRadius.control, style: .continuous)
+                        .fill(BellwireTheme.accent.opacity(0.14))
+                    Image(systemName: purchaseManager.hasPro ? "checkmark.seal.fill" : "sparkles")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(BellwireTheme.accent)
+                }
+                .frame(width: 46, height: 46)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: BellwireSpacing.compact) {
+                        Text("Bellwire Pro")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.ink)
+                        if purchaseManager.hasPro {
+                            Text("ACTIVE")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .tracking(0.6)
+                                .foregroundStyle(BellwireTheme.accentInk)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(BellwireTheme.accent, in: Capsule())
+                        }
+                    }
+                    Text(
+                        purchaseManager.hasPro
+                            ? "Your Pro access is active"
+                            : "More projects, events, devices, and history"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(BellwireTheme.secondaryInk)
+                    .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(BellwireTheme.accent)
+            }
+            .padding(BellwireSpacing.standard)
+            .background(
+                LinearGradient(
+                    colors: [
+                        BellwireTheme.surface,
+                        BellwireTheme.accent.opacity(0.10),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: RoundedRectangle(cornerRadius: BellwireRadius.largeCard, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: BellwireRadius.largeCard, style: .continuous)
+                    .stroke(BellwireTheme.accent.opacity(0.34), lineWidth: 1)
+            }
+            .shadow(color: BellwireTheme.cardShadow, radius: 14, y: 5)
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityHint("Opens Bellwire Pro purchase options")
     }
 
     private var connectionSection: some View {

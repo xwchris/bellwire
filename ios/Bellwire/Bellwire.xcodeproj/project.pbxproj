@@ -27,6 +27,8 @@
 		B00000000000000000000013 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* Localization.swift */; };
 		B00000000000000000000014 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001A /* Localizable.strings */; };
 		B00000000000000000000015 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001B /* PrivacyInfo.xcprivacy */; };
+		B00000000000000000000016 /* PurchaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001E /* PurchaseManager.swift */; };
+		B00000000000000000000017 /* PaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001F /* PaywallView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -82,6 +84,8 @@
 		F0000000000000000000001B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F0000000000000000000001C /* Defaults.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Defaults.xcconfig; sourceTree = "<group>"; };
 		F0000000000000000000001D /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
+		F0000000000000000000001E /* PurchaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseManager.swift; sourceTree = "<group>"; };
+		F0000000000000000000001F /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,6 +133,8 @@
 				F00000000000000000000013 /* SurfaceViews.swift */,
 				F0000000000000000000000D /* DetailViews.swift */,
 				F0000000000000000000000E /* SettingsView.swift */,
+				F0000000000000000000001E /* PurchaseManager.swift */,
+				F0000000000000000000001F /* PaywallView.swift */,
 				F00000000000000000000012 /* Assets.xcassets */,
 				F0000000000000000000001A /* Localizable.strings */,
 				F0000000000000000000000F /* Info.plist */,
@@ -283,6 +289,8 @@
 				B00000000000000000000010 /* SurfaceViews.swift in Sources */,
 				B0000000000000000000000D /* DetailViews.swift in Sources */,
 				B0000000000000000000000E /* SettingsView.swift in Sources */,
+				B00000000000000000000016 /* PurchaseManager.swift in Sources */,
+				B00000000000000000000017 /* PaywallView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -341,7 +349,7 @@
 			ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 			CODE_SIGN_ENTITLEMENTS = Bellwire/Bellwire.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 7;
+			CURRENT_PROJECT_VERSION = 8;
 			DEVELOPMENT_TEAM = "$(BELLWIRE_DEVELOPMENT_TEAM)";
 			ENABLE_PREVIEWS = YES;
 			GENERATE_INFOPLIST_FILE = NO;
@@ -362,7 +370,7 @@
 			ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 			CODE_SIGN_ENTITLEMENTS = Bellwire/Bellwire.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 7;
+			CURRENT_PROJECT_VERSION = 8;
 			DEVELOPMENT_TEAM = "$(BELLWIRE_DEVELOPMENT_TEAM)";
 			ENABLE_PREVIEWS = YES;
 			GENERATE_INFOPLIST_FILE = NO;
@@ -382,7 +390,7 @@
 			APPLICATION_EXTENSION_API_ONLY = YES;
 			CODE_SIGN_ENTITLEMENTS = BellwireNotificationService/BellwireNotificationService.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 7;
+			CURRENT_PROJECT_VERSION = 8;
 			DEVELOPMENT_TEAM = "$(BELLWIRE_DEVELOPMENT_TEAM)";
 			GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = BellwireNotificationService/Info.plist;
@@ -401,7 +409,7 @@
 			APPLICATION_EXTENSION_API_ONLY = YES;
 			CODE_SIGN_ENTITLEMENTS = BellwireNotificationService/BellwireNotificationService.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 7;
+			CURRENT_PROJECT_VERSION = 8;
 			DEVELOPMENT_TEAM = "$(BELLWIRE_DEVELOPMENT_TEAM)";
 			GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = BellwireNotificationService/Info.plist;

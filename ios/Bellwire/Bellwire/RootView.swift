@@ -8,21 +8,45 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if !model.isAuthenticated {
-                WelcomeView()
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else if !notificationOnboardingSeen {
-                NotificationOnboardingView(isComplete: $notificationOnboardingSeen)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+#if DEBUG
+            if Self.showsPaywallPreview {
+                PaywallView(appAccountToken: nil)
             } else {
-                MainTabView()
-                    .transition(.opacity)
+                authenticatedContent
             }
+#else
+            authenticatedContent
+#endif
         }
         .background(BellwireTheme.background.ignoresSafeArea())
         .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: model.isAuthenticated)
         .task { await model.bootstrap() }
     }
+
+    @ViewBuilder
+    private var authenticatedContent: some View {
+        if !model.isAuthenticated {
+            WelcomeView()
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        } else if !notificationOnboardingSeen {
+            NotificationOnboardingView(isComplete: $notificationOnboardingSeen)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+        } else {
+            MainTabView()
+                .transition(.opacity)
+        }
+    }
+
+#if DEBUG
+    private static var showsPaywallPreview: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-BellwireScreenshot"),
+              arguments.indices.contains(index + 1) else {
+            return false
+        }
+        return arguments[index + 1] == "paywall"
+    }
+#endif
 }
 
 struct MainTabView: View {
