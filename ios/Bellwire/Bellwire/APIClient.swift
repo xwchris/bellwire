@@ -48,6 +48,14 @@ struct APIClient {
         _ = try await performAPIRequest(path, method: method, body: body)
     }
 
+    func requestData(
+        _ path: String,
+        method: HTTPMethod = .get,
+        body: (any Encodable)? = nil
+    ) async throws -> Data {
+        try await performAPIRequest(path, method: method, body: body)
+    }
+
     private func performAPIRequest(
         _ path: String,
         method: HTTPMethod,

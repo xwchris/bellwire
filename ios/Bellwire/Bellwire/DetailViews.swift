@@ -176,7 +176,9 @@ struct EventDetailView: View {
             VStack(spacing: 0) {
                 StructuredFieldRow(key: "event_id", value: event.id)
                 Divider().overlay(BellwireTheme.separator)
-                StructuredFieldRow(key: "idempotency_key", value: event.idempotencyKey)
+                if let idempotencyKeyHash = event.idempotencyKeyHash {
+                    StructuredFieldRow(key: "idempotency_hash", value: idempotencyKeyHash)
+                }
             }
             .padding(.horizontal, BellwireSpacing.standard)
             .bellwireSurface(radius: BellwireRadius.card, elevated: false)
@@ -216,6 +218,7 @@ struct EventDetailView: View {
 
 struct ProjectDetailView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var purchaseManager: PurchaseManager
     @Environment(\.dismiss) private var dismiss
     let projectID: String
     @State private var overview: ProjectOverview?
@@ -224,7 +227,11 @@ struct ProjectDetailView: View {
     @State private var isUpdating = false
     @State private var isDeleting = false
     @State private var showsDeleteConfirmation = false
+    @State private var showsPaywall = false
     @State private var copiedEndpoint = false
+    @State private var isExporting = false
+    @State private var exportDocument: ProjectExportDocument?
+    @State private var liveActivitySurfaceIDs = Set<String>()
 
     var body: some View {
         ScrollView {
@@ -234,6 +241,8 @@ struct ProjectDetailView: View {
                         ErrorBanner(message: errorMessage) { self.errorMessage = nil }
                     }
                     projectHeader(overview)
+                    deliveryMode(overview)
+                    planUsage(overview)
                     health(overview)
                     liveSurfaces(overview)
                     recentEvents
@@ -256,7 +265,21 @@ struct ProjectDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let project = overview {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        export(project)
+                    } label: {
+                        if isExporting {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+                    .disabled(isExporting || isDeleting)
+                    .accessibilityLabel("Export project")
+                    .accessibilityHint("Exports Event and delivery history as JSON")
+
                     Button(project.status == "paused" ? "Resume" : "Pause") {
                         Task { await togglePause(project) }
                     }
@@ -276,6 +299,13 @@ struct ProjectDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This permanently deletes the project, its events, notification configuration, tokens, and live surfaces. This action cannot be undone.")
+        }
+        .sheet(item: $exportDocument) { document in
+            ProjectExportShareSheet(url: document.url)
+        }
+        .fullScreenCover(isPresented: $showsPaywall) {
+            PaywallView(appAccountToken: model.session.flatMap { UUID(uuidString: $0.user.id) })
+                .environmentObject(purchaseManager)
         }
     }
 
@@ -297,6 +327,13 @@ struct ProjectDetailView: View {
                         text: project.status == "paused" ? "Paused" : "Active",
                         color: project.status == "paused" ? BellwireTheme.mutedInk : BellwireTheme.success
                     )
+                    StatusBadgeView(
+                        text: project.deliveryMode == .private ? "Private" : "Hosted",
+                        color: project.deliveryMode == .private
+                            ? BellwireTheme.success
+                            : BellwireTheme.warning,
+                        showsDot: false
+                    )
                     Text(project.category.capitalized)
                         .font(.caption)
                         .foregroundStyle(BellwireTheme.mutedInk)
@@ -305,6 +342,115 @@ struct ProjectDetailView: View {
             Spacer()
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func deliveryMode(_ project: ProjectOverview) -> some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Data path")
+            HStack(alignment: .top, spacing: BellwireSpacing.standard) {
+                Image(
+                    systemName: project.deliveryMode == .private
+                        ? "lock.shield.fill"
+                        : "cloud.fill"
+                )
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(
+                    project.deliveryMode == .private
+                        ? BellwireTheme.success
+                        : BellwireTheme.warning
+                )
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(project.deliveryMode == .private ? "Private delivery" : "Hosted delivery")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(BellwireTheme.ink)
+                    if project.deliveryMode == .private {
+                        Text(
+                            "\(project.privateReadiness.readyDevices)/\(project.privateReadiness.activeDevices) devices ready · Notification, Inbox, and Surface details come directly from your service."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(BellwireTheme.secondaryInk)
+                        if let lastSyncAt = model.privateLastSyncAt[project.id] {
+                            HStack(spacing: 4) {
+                                Text("Last local sync")
+                                Text(lastSyncAt, style: .relative)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                        } else {
+                            Text("Never synced")
+                                .font(.caption2)
+                                .foregroundStyle(BellwireTheme.mutedInk)
+                        }
+                        if let error = model.privateSyncErrors[project.id] {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(BellwireTheme.danger)
+                        }
+                    } else {
+                        Text("Bellwire Cloud stores Event, Inbox, Surface, and detailed notification content according to your plan retention.")
+                            .font(.caption)
+                            .foregroundStyle(BellwireTheme.secondaryInk)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(BellwireSpacing.standard)
+            .bellwireSurface(elevated: false)
+        }
+    }
+
+    @ViewBuilder
+    private func planUsage(_ project: ProjectOverview) -> some View {
+        if let entitlement = model.entitlement {
+            VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+                SectionHeaderView(
+                    title: "Plan & usage",
+                    hint: entitlement.plan == "pro" ? "Pro" : "Free"
+                )
+                VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(entitlement.usage.acceptedSignals.formatted()) / \(entitlement.limits.monthlySignals.formatted()) Signals")
+                                .font(BellwireTypography.technicalStrong)
+                                .foregroundStyle(BellwireTheme.ink)
+                            Text(
+                                project.deliveryMode == .hosted
+                                    ? "\(entitlement.limits.hostedRetentionDays)-day Hosted history"
+                                    : "30-day Private history on this iPhone"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(BellwireTheme.secondaryInk)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text("\(project.liveSurfaces.count)/\(entitlement.limits.surfacesPerProject)")
+                                .font(BellwireTypography.technicalStrong)
+                                .foregroundStyle(BellwireTheme.accent)
+                            Text("Surfaces")
+                                .font(.caption2)
+                                .foregroundStyle(BellwireTheme.mutedInk)
+                        }
+                    }
+                    ProgressView(
+                        value: min(
+                            Double(entitlement.usage.acceptedSignals)
+                                / Double(max(entitlement.limits.monthlySignals, 1)),
+                            1.1
+                        )
+                    )
+                    .tint(BellwireTheme.accent)
+                    if let resetDate = ISO8601DateFormatter.bellwireDate(
+                        from: entitlement.usage.periodEnd
+                    ) {
+                        Text("Resets \(resetDate, format: .dateTime.month().day().hour().minute())")
+                            .font(.caption2)
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                    }
+                }
+                .padding(BellwireSpacing.standard)
+                .bellwireSurface(elevated: false)
+            }
+        }
     }
 
     @ViewBuilder
@@ -320,7 +466,30 @@ struct ProjectDetailView: View {
                 .bellwireSurface(elevated: false)
             } else {
                 ForEach(project.liveSurfaces) { surface in
-                    LiveSurfaceCard(surface: surface)
+                    VStack(spacing: BellwireSpacing.compact) {
+                        LiveSurfaceCard(surface: surface)
+                        Button {
+                            toggleLiveActivity(surface)
+                        } label: {
+                            Label(
+                                liveActivitySurfaceIDs.contains(surface.id)
+                                    ? "Stop Live Activity"
+                                    : "Start Live Activity",
+                                systemImage: liveActivitySurfaceIDs.contains(surface.id)
+                                    ? "xmark.circle"
+                                    : "bolt.horizontal.circle.fill"
+                            )
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.accent)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                        }
+                        .buttonStyle(PressableButtonStyle())
+                        .accessibilityHint(
+                            liveActivitySurfaceIDs.contains(surface.id)
+                                ? "Removes this Surface from the Lock Screen and Dynamic Island"
+                                : "Shows this Surface on the Lock Screen and Dynamic Island"
+                        )
+                    }
                 }
             }
         }
@@ -328,7 +497,12 @@ struct ProjectDetailView: View {
 
     private func health(_ project: ProjectOverview) -> some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
-            SectionHeaderView(title: "Delivery health · 24h", hint: project.deliveryHealth.status.capitalized)
+            SectionHeaderView(
+                title: project.deliveryMode == .private
+                    ? "Wake delivery · 24h"
+                    : "Delivery health · 24h",
+                hint: project.deliveryHealth.status.capitalized
+            )
             HStack(spacing: 10) {
                 healthMetric(project.deliveryHealth.accepted, "Accepted", BellwireTheme.success)
                 healthMetric(project.deliveryHealth.queued, "Queued", BellwireTheme.warning)
@@ -356,7 +530,10 @@ struct ProjectDetailView: View {
 
     private func endpoint(_ project: ProjectOverview) -> some View {
         VStack(alignment: .leading, spacing: BellwireSpacing.small) {
-            SectionHeaderView(title: "Event endpoint", hint: copiedEndpoint ? "Copied" : nil)
+            SectionHeaderView(
+                title: project.deliveryMode == .private ? "Direct service" : "Event endpoint",
+                hint: copiedEndpoint ? "Copied" : nil
+            )
             VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
                 Text(fullEndpoint(project))
                     .font(BellwireTypography.technical)
@@ -485,6 +662,11 @@ struct ProjectDetailView: View {
             let result = try await model.loadProject(id: projectID)
             overview = result.0
             events = result.1
+            liveActivitySurfaceIDs = Set(
+                result.0.liveSurfaces
+                    .filter { model.isLiveActivityActive(surfaceID: $0.id) }
+                    .map(\.id)
+            )
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -517,6 +699,51 @@ struct ProjectDetailView: View {
         }
     }
 
+    private func export(_ project: ProjectOverview) {
+        guard model.entitlement?.hasPro == true else {
+            Task { await model.captureProductEvent("upgrade_clicked", source: "project_export") }
+            showsPaywall = true
+            return
+        }
+        guard !isExporting else { return }
+        isExporting = true
+        Task {
+            defer { isExporting = false }
+            do {
+                exportDocument = ProjectExportDocument(
+                    url: try await model.exportProject(project)
+                )
+                BellwireHaptics.success()
+            } catch {
+                errorMessage = error.localizedDescription
+                BellwireHaptics.error()
+            }
+        }
+    }
+
+    private func toggleLiveActivity(_ surface: LiveSurfaceRecord) {
+        guard model.entitlement?.hasPro == true else {
+            Task { await model.captureProductEvent("upgrade_clicked", source: "live_activity") }
+            showsPaywall = true
+            return
+        }
+        Task {
+            do {
+                if liveActivitySurfaceIDs.contains(surface.id) {
+                    await model.stopLiveActivity(surfaceID: surface.id)
+                    liveActivitySurfaceIDs.remove(surface.id)
+                } else {
+                    try await model.startLiveActivity(for: surface)
+                    liveActivitySurfaceIDs.insert(surface.id)
+                    BellwireHaptics.success()
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+                BellwireHaptics.error()
+            }
+        }
+    }
+
     private func fullEndpoint(_ project: ProjectOverview) -> String {
         AppConfig.apiBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             + "/"
@@ -527,4 +754,22 @@ struct ProjectDetailView: View {
         guard let version = project.eventSchemas.map(\.version).max() else { return nil }
         return "Schema v\(version)"
     }
+}
+
+private struct ProjectExportDocument: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct ProjectExportShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIActivityViewController,
+        context: Context
+    ) {}
 }

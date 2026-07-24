@@ -43,14 +43,23 @@ const validEvent = {
 
 class CapturingDispatcher implements DeliveryDispatcher {
   readonly eventIds: string[] = [];
+  readonly wakeIds: string[] = [];
 
   async enqueue(event: { id: string }): Promise<void> {
     this.eventIds.push(event.id);
+  }
+
+  async enqueuePrivateWake(wake: { id: string }): Promise<void> {
+    this.wakeIds.push(wake.id);
   }
 }
 
 class FailingDispatcher implements DeliveryDispatcher {
   async enqueue(): Promise<void> {
+    throw new Error("Queue quota exceeded");
+  }
+
+  async enqueuePrivateWake(): Promise<void> {
     throw new Error("Queue quota exceeded");
   }
 }
@@ -81,6 +90,7 @@ describe("Bellwire MVP API", () => {
   }
 
   async function configureProject(projectId: string): Promise<string> {
+    await makeHosted(projectId);
     const schemaResponse = await app.request(`/v1/projects/${projectId}/event-schemas`, {
       method: "POST",
       headers: { authorization: "Bearer test", "content-type": "application/json" },
@@ -96,6 +106,12 @@ describe("Bellwire MVP API", () => {
     expect(tokenResponse.status).toBe(201);
     const body = await tokenResponse.json<{ token: string }>();
     return body.token;
+  }
+
+  async function makeHosted(projectId: string): Promise<void> {
+    const privateProject = await repository.getProject(projectId);
+    if (!privateProject) throw new Error("Project missing");
+    await repository.updateProject({ ...privateProject, deliveryMode: "hosted" });
   }
 
   async function registerDevice(): Promise<void> {
@@ -123,7 +139,7 @@ describe("Bellwire MVP API", () => {
       compatibility: {
         appVersion: "1.0.0",
         apiVersion: "v1",
-        schemaMigration: "202607240001",
+        schemaMigration: "202607250001",
       },
     });
   });
@@ -151,6 +167,121 @@ describe("Bellwire MVP API", () => {
     expect(storedTokens[0]?.tokenHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(storedTokens[0]?.tokenHash).not.toBe(token);
     expect(storedTokens[0]).not.toHaveProperty("token");
+  });
+
+  it("creates new projects in Private mode and strictly isolates mode-specific writes", async () => {
+    const projectId = await createProject();
+    expect(await repository.getProject(projectId)).toMatchObject({ deliveryMode: "private" });
+
+    const hostedToken = await app.request(`/v1/projects/${projectId}/ingest-tokens`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ name: "must-fail" }),
+    });
+    expect(hostedToken.status).toBe(409);
+    expect(await hostedToken.json()).toMatchObject({ error: { code: "PROJECT_PRIVATE_MODE" } });
+
+    await makeHosted(projectId);
+    const wakeToken = await app.request(`/v1/projects/${projectId}/wake-tokens`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ name: "must-fail" }),
+    });
+    expect(wakeToken.status).toBe(409);
+    expect(await wakeToken.json()).toMatchObject({ error: { code: "PROJECT_HOSTED_MODE" } });
+  });
+
+  it("accepts one strictly shaped Private wake and stores only idempotency hash", async () => {
+    const projectId = await createProject();
+    await registerDevice();
+    const tokenResponse = await app.request(`/v1/projects/${projectId}/wake-tokens`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ name: "production" }),
+    });
+    const { token } = await tokenResponse.json<{ token: string }>();
+    expect(token).toMatch(/^bw_wake_/u);
+
+    const send = (body: Record<string, unknown>, key = "source-operation-123") =>
+      app.request(`/v1/projects/${projectId}/private-wakes`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": key,
+        },
+        body: JSON.stringify(body),
+      });
+    const reference = "N8Y1uFfPnM6J6q3O2gEmDA";
+    const first = await send({ reference, priority: "normal" });
+    expect(first.status).toBe(201);
+    const accepted = await first.json<{ wakeId: string; deduplicated: boolean }>();
+    expect(accepted.deduplicated).toBe(false);
+    expect(dispatcher.wakeIds).toEqual([accepted.wakeId]);
+
+    const duplicate = await send({ reference, priority: "normal" });
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toMatchObject({
+      wakeId: accepted.wakeId,
+      deduplicated: true,
+    });
+    expect(dispatcher.wakeIds).toEqual([accepted.wakeId]);
+    expect(await repository.getPrivateWake(accepted.wakeId)).toMatchObject({
+      idempotencyKeyHash: await hashSecret("source-operation-123"),
+      reference,
+    });
+    expect(JSON.stringify(await repository.getPrivateWake(accepted.wakeId)))
+      .not.toContain("source-operation-123");
+
+    const unknown = await send({ reference, priority: "normal", title: "must not reach cloud" }, "other");
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toMatchObject({ error: { code: "INVALID_REQUEST" } });
+    const shortReference = await send({ reference: "order_123", priority: "normal" }, "third");
+    expect(shortReference.status).toBe(400);
+  });
+
+  it("requires an Agent request and user approval before Hosted mode, then revokes wake tokens", async () => {
+    const projectId = await createProject();
+    const wakeTokenResponse = await app.request(`/v1/projects/${projectId}/wake-tokens`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ name: "production" }),
+    });
+    expect(wakeTokenResponse.status).toBe(201);
+
+    const directUserRequest = await app.request(`/v1/projects/${projectId}/delivery-mode-requests`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ toMode: "hosted" }),
+    });
+    expect(directUserRequest.status).toBe(403);
+
+    const agentApp = createApp({
+      service: new BellwireService(repository, dispatcher),
+      authenticator: new StaticAuthenticator({
+        ...userPrincipal,
+        kind: "agent",
+        tokenId: "11111111-1111-4111-8111-111111111119",
+      }),
+    });
+    const requested = await agentApp.request(`/v1/projects/${projectId}/delivery-mode-requests`, {
+      method: "POST",
+      headers: { authorization: "Bearer agent", "content-type": "application/json" },
+      body: JSON.stringify({ toMode: "hosted" }),
+    });
+    expect(requested.status).toBe(201);
+    const request = await requested.json<{ id: string }>();
+
+    const approved = await app.request(`/v1/delivery-mode-requests/${request.id}/approve`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(approved.status).toBe(200);
+    expect(await repository.getProject(projectId)).toMatchObject({ deliveryMode: "hosted" });
+    expect(await repository.listPrivateWakeTokens(projectId)).toEqual([
+      expect.objectContaining({ revokedAt: expect.any(String) }),
+    ]);
   });
 
   it("stores a public HTTPS project logo and allows clearing it", async () => {
@@ -332,47 +463,9 @@ describe("Bellwire MVP API", () => {
     expect(invalidEnvironment.status).toBe(400);
   });
 
-  it("defaults notification privacy to local enrichment and lets the user change it", async () => {
-    const headers = { authorization: "Bearer test", "content-type": "application/json" };
-    const initial = await app.request("/v1/notification-preference", { headers });
-    expect(initial.status).toBe(200);
-    expect(await initial.json()).toMatchObject({ mode: "local_enrichment" });
-
-    const updated = await app.request("/v1/notification-preference", {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify({ mode: "generic" }),
-    });
-    expect(updated.status).toBe(200);
-    expect(await updated.json()).toMatchObject({ mode: "generic" });
-
-    const invalid = await app.request("/v1/notification-preference", {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify({ mode: "private-ish" }),
-    });
-    expect(invalid.status).toBe(400);
-  });
-
-  it("exposes the current notification mode to the project ingest token", async () => {
-    const projectId = await createProject();
-    const token = await configureProject(projectId);
-    await repository.saveNotificationPreference({
-      userId: userPrincipal.userId,
-      mode: "hosted_detailed",
-      updatedAt: new Date().toISOString(),
-    });
-
-    const response = await app.request(`/v1/events/${projectId}/notification-preference`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ mode: "hosted_detailed" });
-  });
-
   it("upserts a typed live Surface by stable key and exposes only the latest state", async () => {
     const projectId = await createProject();
+    await makeHosted(projectId);
     const endpoint = `/v1/projects/${projectId}/surfaces/sales-today`;
     const first = await app.request(endpoint, {
       method: "PUT",
@@ -460,6 +553,7 @@ describe("Bellwire MVP API", () => {
 
   it("treats JSON object key order changes from storage as an unchanged Surface", async () => {
     const projectId = await createProject();
+    await makeHosted(projectId);
     const timestamp = "2026-07-23T02:22:20.000Z";
     await repository.saveLiveSurface({
       id: "stored-surface",
@@ -505,6 +599,8 @@ describe("Bellwire MVP API", () => {
   it("keeps project and Surface positions stable across content updates", async () => {
     const firstProjectId = await createProject();
     const secondProjectId = await createProject();
+    await makeHosted(firstProjectId);
+    await makeHosted(secondProjectId);
 
     const moveFirstProject = await app.request(`/v1/projects/${firstProjectId}/order`, {
       method: "PATCH",
@@ -577,6 +673,7 @@ describe("Bellwire MVP API", () => {
     });
 
     const otherProjectId = await createProject();
+    await makeHosted(otherProjectId);
     const crossProject = await app.request(`/v1/projects/${otherProjectId}/surfaces/revenue-today`, {
       method: "PUT",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -660,8 +757,9 @@ describe("Bellwire MVP API", () => {
   });
 
   it("bootstraps an opaque direct connection without exposing its plaintext manifest", async () => {
+    const projectId = await createProject();
     const deviceKeyId = "11111111-1111-4111-8111-111111111111";
-    const installationId = "22222222-2222-4222-8222-222222222222";
+    const installationId = "11111111-1111-4111-8111-111111111111";
     const publicKey = btoa(String.fromCharCode(4, ...new Array(64).fill(7)));
     const bindingResponse = await app.request("/v1/device-bindings", {
       method: "POST",
@@ -711,6 +809,8 @@ describe("Bellwire MVP API", () => {
         "content-type": "application/json",
       },
       body: JSON.stringify({
+        projectId,
+        manifestVersion: 2,
         deviceKeyId,
         algorithm: "p256-hkdf-sha256-aes-gcm",
         ephemeralPublicKey,
@@ -730,33 +830,101 @@ describe("Bellwire MVP API", () => {
       envelopes: [{
         id: envelope.id,
         deviceKeyId,
+        projectId,
+        manifestVersion: 2,
         ephemeralPublicKey,
         sealedBox,
       }],
     });
-    expect((await app.request(`/v1/direct-connections/${envelope.id}`, {
-      method: "DELETE",
-      headers: { authorization: "Bearer test" },
-    })).status).toBe(204);
+    expect((await app.request(`/v1/direct-connections/${envelope.id}/ack`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({ deviceKeyId }),
+    })).status).toBe(200);
     expect(await (await app.request(
       `/v1/direct-connections?deviceKeyId=${deviceKeyId}`,
       { headers: { authorization: "Bearer test" } },
     )).json()).toEqual({ envelopes: [] });
+
+    await registerDevice();
+    await makeHosted(projectId);
+    const privateModeRequest = await agentApp.request(
+      `/v1/projects/${projectId}/delivery-mode-requests`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${connected.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ toMode: "private" }),
+      },
+    );
+    expect(privateModeRequest.status).toBe(201);
+    const modeRequest = await privateModeRequest.json<{ id: string }>();
+
+    const hostedWithoutRequest = await createProject();
+    await makeHosted(hostedWithoutRequest);
+    expect((await agentApp.request("/v1/direct-connections", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${connected.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId: hostedWithoutRequest,
+        manifestVersion: 2,
+        deviceKeyId,
+        algorithm: "p256-hkdf-sha256-aes-gcm",
+        ephemeralPublicKey,
+        sealedBox,
+      }),
+    })).status).toBe(409);
+
+    const replacementEnvelope = await agentApp.request("/v1/direct-connections", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${connected.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId,
+        manifestVersion: 2,
+        deviceKeyId,
+        algorithm: "p256-hkdf-sha256-aes-gcm",
+        ephemeralPublicKey,
+        sealedBox,
+      }),
+    });
+    expect(replacementEnvelope.status).toBe(201);
+
+    const approved = await app.request(
+      `/v1/delivery-mode-requests/${modeRequest.id}/approve`,
+      {
+        method: "POST",
+        headers: { authorization: "Bearer test", "content-type": "application/json" },
+        body: "{}",
+      },
+    );
+    expect(approved.status).toBe(200);
+    expect(await repository.getProject(projectId)).toMatchObject({ deliveryMode: "private" });
   });
 
   it("reports delivery health from the last 24 hours instead of all history", async () => {
     const projectId = await createProject();
-    await repository.createEventIfAbsent({
+    const privateProject = await repository.getProject(projectId);
+    if (!privateProject) throw new Error("Project missing");
+    await repository.updateProject({ ...privateProject, deliveryMode: "hosted" });
+    await repository.acceptHostedEvent({
       id: "health-event",
       projectId,
       eventType: "health.check",
-      idempotencyKey: "health-event",
+      idempotencyKeyHash: await hashSecret("health-event"),
       data: {},
       sensitiveFields: [],
       occurredAt: new Date().toISOString(),
       receivedAt: new Date().toISOString(),
       status: "accepted",
-    });
+    }, "disabled");
     const oldTimestamp = new Date(Date.now() - 48 * 60 * 60 * 1_000).toISOString();
     await repository.createDeliveryIfAbsent({
       id: "old-failure",
@@ -1012,16 +1180,19 @@ describe("Bellwire MVP API", () => {
 
   it("fails closed when reading a legacy event without a sensitive-field snapshot", async () => {
     const projectId = await createProject();
-    await repository.createEventIfAbsent({
+    const privateProject = await repository.getProject(projectId);
+    if (!privateProject) throw new Error("Project missing");
+    await repository.updateProject({ ...privateProject, deliveryMode: "hosted" });
+    await repository.acceptHostedEvent({
       id: "legacy-event",
       projectId,
       eventType: "legacy.received",
-      idempotencyKey: "legacy-event",
+      idempotencyKeyHash: await hashSecret("legacy-event"),
       data: { publicAtTheTime: "unknown", secret: "must stay hidden" },
       occurredAt: "2026-07-19T10:00:00.000Z",
       receivedAt: "2026-07-19T10:00:00.000Z",
       status: "accepted",
-    });
+    }, "disabled");
 
     const list = await app.request(`/v1/projects/${projectId}/events`, {
       headers: { authorization: "Bearer test" },
@@ -1129,7 +1300,7 @@ describe("Bellwire MVP API", () => {
     const duplicateBody = await duplicate.json<{ eventId: string; deduplicated: boolean }>();
     expect(first.status).toBe(201);
     expect(duplicate.status).toBe(200);
-    expect(duplicateBody).toEqual({ eventId: firstBody.eventId, deduplicated: true });
+    expect(duplicateBody).toMatchObject({ eventId: firstBody.eventId, deduplicated: true });
     expect((await repository.listEvents(projectId, { limit: 100 })).events).toHaveLength(1);
     expect(new Set(dispatcher.eventIds)).toEqual(new Set([firstBody.eventId]));
   });
@@ -1148,6 +1319,7 @@ describe("Bellwire MVP API", () => {
 
   it("does not let templates expose sensitive fields", async () => {
     const projectId = await createProject();
+    await makeHosted(projectId);
     const schemaResponse = await app.request(`/v1/projects/${projectId}/event-schemas`, {
       method: "POST",
       headers: { authorization: "Bearer test", "content-type": "application/json" },
@@ -1167,7 +1339,7 @@ describe("Bellwire MVP API", () => {
     expect(await response.json()).toMatchObject({ error: { code: "INVALID_REQUEST" } });
   });
 
-  it("stores paused-project events without dispatching a notification", async () => {
+  it("rejects paused-project events without dispatching a notification", async () => {
     const projectId = await createProject();
     const token = await configureProject(projectId);
     await registerDevice();
@@ -1186,7 +1358,8 @@ describe("Bellwire MVP API", () => {
       },
       body: JSON.stringify(validEvent),
     });
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "PROJECT_PAUSED" } });
     expect(dispatcher.eventIds).toHaveLength(0);
   });
 
@@ -1216,5 +1389,64 @@ describe("Bellwire MVP API", () => {
       status: "failed",
       errorCode: "retryable:QueueUnavailable",
     }]);
+  });
+
+  it("exports Hosted Event and delivery records only for a server-authoritative Pro account", async () => {
+    const projectId = await createProject();
+    await makeHosted(projectId);
+    const eventId = "55555555-5555-4555-8555-555555555555";
+    const occurredAt = new Date().toISOString();
+    await repository.acceptHostedEvent({
+      id: eventId,
+      projectId,
+      eventType: "payment.success",
+      idempotencyKeyHash: await hashSecret("export-event"),
+      data: { amount: 28 },
+      sensitiveFields: [],
+      occurredAt,
+      receivedAt: occurredAt,
+      status: "accepted",
+    }, "disabled");
+    await repository.createDeliveryIfAbsent({
+      id: "66666666-6666-4666-8666-666666666666",
+      eventId,
+      deviceId: "77777777-7777-4777-8777-777777777777",
+      channel: "apns",
+      status: "accepted_by_apns",
+      attemptCount: 1,
+      queuedAt: occurredAt,
+      sentAt: occurredAt,
+      updatedAt: occurredAt,
+    });
+
+    expect((await app.request(`/v1/projects/${projectId}/export`, {
+      headers: { authorization: "Bearer test" },
+    })).status).toBe(409);
+
+    await repository.saveAppleTransaction({
+      transactionId: "transaction-export",
+      originalTransactionId: "original-export",
+      userId: userPrincipal.userId,
+      productId: "app.bellwire.pro.monthly",
+      environment: "Sandbox",
+      purchaseDate: occurredAt,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      status: "active",
+      signedDate: occurredAt,
+      updatedAt: occurredAt,
+    });
+    const response = await app.request(`/v1/projects/${projectId}/export`, {
+      headers: { authorization: "Bearer test" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      version: 1,
+      project: { id: projectId, deliveryMode: "hosted" },
+      events: [{
+        id: eventId,
+        data: { amount: 28 },
+        deliveries: [{ status: "accepted_by_apns", attemptCount: 1 }],
+      }],
+    });
   });
 });

@@ -392,6 +392,8 @@ describe("SupabaseBellwireRepository", () => {
       id: "33333333-3333-4333-8333-333333333333",
       user_id: "user-id",
       device_key_id: deviceKeyRow.id,
+      project_id: "44444444-4444-4444-8444-444444444444",
+      manifest_version: 2,
       algorithm: "p256-hkdf-sha256-aes-gcm",
       ephemeral_public_key: "ephemeral-key",
       sealed_box: "opaque-ciphertext",
@@ -404,7 +406,9 @@ describe("SupabaseBellwireRepository", () => {
       async (input, init) => {
         const request = new Request(input, init);
         requests.push(request);
-        if (request.method === "DELETE") return new Response(null, { status: 204 });
+        if (request.url.includes("/rpc/ack_direct_connection_envelope")) {
+          return Response.json(envelopeRow.project_id);
+        }
         if (request.url.includes("/device_keys")) return Response.json([deviceKeyRow]);
         return Response.json([envelopeRow]);
       },
@@ -424,6 +428,8 @@ describe("SupabaseBellwireRepository", () => {
       id: envelopeRow.id,
       userId: "user-id",
       deviceKeyId: deviceKeyRow.id,
+      projectId: envelopeRow.project_id,
+      manifestVersion: 2,
       algorithm: "p256-hkdf-sha256-aes-gcm",
       ephemeralPublicKey: envelopeRow.ephemeral_public_key,
       sealedBox: envelopeRow.sealed_box,
@@ -435,13 +441,18 @@ describe("SupabaseBellwireRepository", () => {
       deviceKeyRow.id,
       "2026-07-23T12:00:00.000Z",
     )).toMatchObject([{ id: envelopeRow.id, sealedBox: "opaque-ciphertext" }]);
-    await repository.deleteDirectConnectionEnvelope(envelopeRow.id, "user-id");
+    expect(await repository.acknowledgeDirectConnectionEnvelope(
+      envelopeRow.id,
+      "user-id",
+      deviceKeyRow.id,
+      "2026-07-23T12:05:00.000Z",
+    )).toBe(envelopeRow.project_id);
 
     expect(requests[0]?.url).toContain("/device_keys?on_conflict=user_id,installation_id");
     expect(requests[1]?.url).toContain("/direct_connection_envelopes");
     expect(requests[2]?.url).toContain("expires_at=gt.2026-07-23T12%3A00%3A00.000Z");
-    expect(requests[3]?.method).toBe("DELETE");
-    expect(requests[3]?.url).toContain("user_id=eq.user-id");
+    expect(requests[3]?.method).toBe("POST");
+    expect(requests[3]?.url).toContain("/rpc/ack_direct_connection_envelope");
   });
 
   it("fetches the latest notification Surface before evaluating enabled", async () => {
@@ -600,12 +611,29 @@ describe("SupabaseBellwireRepository", () => {
   });
 
   it("limits delivery health to records updated inside the requested window", async () => {
-    let request: Request | undefined;
+    const requests: Request[] = [];
     const repository = new SupabaseBellwireRepository(
       "https://example.supabase.co",
       "service-role-key",
       async (input, init) => {
-        request = new Request(input, init);
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.url.includes("/projects?")) {
+          return Response.json([{
+            id: "project-id",
+            user_id: "user-id",
+            name: "Hosted",
+            slug: "hosted",
+            icon: "bell",
+            display_order: 0,
+            category: "automation",
+            status: "active",
+            delivery_mode: "hosted",
+            endpoint: "https://api.example.com",
+            created_at: "2026-07-21T01:00:00.000Z",
+            updated_at: "2026-07-21T01:00:00.000Z",
+          }]);
+        }
         return Response.json([{ status: "accepted_by_apns" }]);
       },
     );
@@ -615,9 +643,51 @@ describe("SupabaseBellwireRepository", () => {
     );
 
     expect(health).toEqual({ queued: 0, accepted: 1, failed: 0, status: "healthy" });
-    expect(request?.url).toContain("events.project_id=eq.project-id");
-    expect(request?.url).toContain(
+    expect(requests[1]?.url).toContain("events.project_id=eq.project-id");
+    expect(requests[1]?.url).toContain(
       "updated_at=gte.2026-07-22T01%3A00%3A00.000Z",
     );
+  });
+
+  it("reads Private delivery health from wake deliveries rather than Hosted events", async () => {
+    const requests: Request[] = [];
+    const repository = new SupabaseBellwireRepository(
+      "https://example.supabase.co",
+      "service-role-key",
+      async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.url.includes("/projects?")) {
+          return Response.json([{
+            id: "private-project",
+            user_id: "user-id",
+            name: "Private",
+            slug: "private",
+            icon: "lock",
+            display_order: 0,
+            category: "automation",
+            status: "active",
+            delivery_mode: "private",
+            endpoint: "https://api.example.com",
+            created_at: "2026-07-21T01:00:00.000Z",
+            updated_at: "2026-07-21T01:00:00.000Z",
+          }]);
+        }
+        return Response.json([
+          { status: "queued" },
+          { status: "failed" },
+        ]);
+      },
+    );
+
+    const health = await repository.getDeliveryHealth(
+      "private-project",
+      "2026-07-22T01:00:00.000Z",
+    );
+
+    expect(health).toEqual({ queued: 1, accepted: 0, failed: 1, status: "degraded" });
+    expect(requests[1]?.url).toContain("/private_wake_deliveries?");
+    expect(requests[1]?.url).toContain("private_wakes.project_id=eq.private-project");
+    expect(requests[1]?.url).not.toContain("events.project_id");
   });
 });

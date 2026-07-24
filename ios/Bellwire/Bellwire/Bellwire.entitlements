@@ -8,6 +8,10 @@
     <array>
         <string>Default</string>
     </array>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>$(BELLWIRE_APP_GROUP)</string>
+    </array>
     <key>keychain-access-groups</key>
     <array>
         <string>$(AppIdentifierPrefix)$(BELLWIRE_APP_BUNDLE_ID).shared</string>

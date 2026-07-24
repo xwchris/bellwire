@@ -117,12 +117,21 @@ function validateRequiredValues(ios, worker) {
     "BELLWIRE_DEVELOPMENT_TEAM",
     "BELLWIRE_APP_BUNDLE_ID",
     "BELLWIRE_EXTENSION_BUNDLE_ID",
+    "BELLWIRE_WIDGET_BUNDLE_ID",
+    "BELLWIRE_APP_GROUP",
     "BELLWIRE_URL_SCHEME",
     "BELLWIRE_API_BASE_URL",
     "BELLWIRE_SUPABASE_URL",
     "BELLWIRE_SUPABASE_PUBLISHABLE_KEY",
   ];
-  const workerKeys = ["APP_ENV", "SUPABASE_URL", "APNS_BUNDLE_ID", "APP_URL_SCHEME", "APNS_ENVIRONMENT"];
+  const workerKeys = [
+    "APP_ENV",
+    "SUPABASE_URL",
+    "APNS_BUNDLE_ID",
+    "APP_URL_SCHEME",
+    "APNS_ENVIRONMENT",
+    "ENTITLEMENT_ENFORCEMENT_MODE",
+  ];
   for (const key of iosKeys) validateValue(`iOS ${key}`, ios[key]);
   for (const key of workerKeys) validateValue(`Worker ${key}`, worker.vars[key]);
   validateValue("Worker name", worker.root.name);
@@ -145,6 +154,8 @@ function validateFormats(ios, worker) {
       "team-id": ios.BELLWIRE_DEVELOPMENT_TEAM,
       "bundle-id": ios.BELLWIRE_APP_BUNDLE_ID,
       "extension-bundle-id": ios.BELLWIRE_EXTENSION_BUNDLE_ID,
+      "widget-bundle-id": ios.BELLWIRE_WIDGET_BUNDLE_ID,
+      "app-group": ios.BELLWIRE_APP_GROUP,
       "url-scheme": ios.BELLWIRE_URL_SCHEME,
       "worker-name": worker.root.name,
       "queue-prefix": worker.root.name,
@@ -170,7 +181,24 @@ function validateConsistency(ios, worker) {
   } else {
     checks.push("notification extension Bundle ID matches the main App ID");
   }
+  const expectedWidget = `${ios.BELLWIRE_APP_BUNDLE_ID}.Widgets`;
+  if (ios.BELLWIRE_WIDGET_BUNDLE_ID !== expectedWidget) {
+    warnings.push(`Widget Bundle ID is ${ios.BELLWIRE_WIDGET_BUNDLE_ID}; expected convention is ${expectedWidget}`);
+  } else {
+    checks.push("Widget Bundle ID matches the main App ID");
+  }
+  const expectedGroup = `group.${ios.BELLWIRE_APP_BUNDLE_ID}.shared`;
+  if (ios.BELLWIRE_APP_GROUP !== expectedGroup) {
+    warnings.push(`App Group is ${ios.BELLWIRE_APP_GROUP}; expected convention is ${expectedGroup}`);
+  } else {
+    checks.push("App Group matches the main App ID");
+  }
   if (worker.vars.APP_ENV !== "production") errors.push("Worker APP_ENV must be production for durable self-hosting");
+  if (worker.vars.ENTITLEMENT_ENFORCEMENT_MODE !== "disabled") {
+    errors.push("Self-hosted Worker ENTITLEMENT_ENFORCEMENT_MODE must be disabled");
+  } else {
+    checks.push("commercial plan enforcement is disabled for self-hosting");
+  }
   if (!["sandbox", "production"].includes(worker.vars.APNS_ENVIRONMENT)) {
     errors.push("Worker APNS_ENVIRONMENT must be sandbox or production");
   }

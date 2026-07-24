@@ -4,10 +4,12 @@ import {
   EVENT_FIELD_TYPES,
   LIVE_SURFACE_TYPES,
   type BellwireEvent,
+  type AccountEntitlement,
   type AgentConnection,
   type AgentScope,
   type Delivery,
   type DeviceKey,
+  type DeliveryModeChangeRequest,
   type DirectConnectionEnvelope,
   type EventFieldDefinition,
   type EventFieldType,
@@ -16,16 +18,24 @@ import {
   type LiveSurface,
   type LiveSurfaceAction,
   type LiveSurfaceType,
-  type NotificationPrivacyMode,
   type NotificationSurface,
+  type PrivateWake,
+  type PrivateWakeToken,
   type Principal,
   type Project,
+  type ProjectDeliveryMode,
   type ValidationIssue,
 } from "../domain/models";
 import type { BellwireRepository } from "../repositories/bellwire-repository";
+import { decodeEventCursor } from "../repositories/event-cursor";
 import { createOpaqueToken, createPairingCode, hashSecret, readBearerToken } from "../security/tokens";
 import type { DeliveryDispatcher } from "./delivery-dispatcher";
 import type { AppleAuthService } from "./apple-auth-service";
+import {
+  readProductEvent,
+  validateAnalyticsProperties,
+  type ProductAnalytics,
+} from "./product-analytics";
 
 type ErrorCode =
   | "INVALID_REQUEST"
@@ -38,18 +48,29 @@ type ErrorCode =
   | "SURFACE_NOT_FOUND"
   | "INVALID_TOKEN"
   | "INVALID_BINDING_CODE"
+  | "INVALID_CURSOR"
   | "IDEMPOTENCY_KEY_REQUIRED"
   | "SCHEMA_VALIDATION_FAILED"
   | "PROJECT_PAUSED"
+  | "PROJECT_PRIVATE_MODE"
+  | "PROJECT_HOSTED_MODE"
+  | "PRIVATE_READINESS_REQUIRED"
+  | "PENDING_MODE_REQUEST_EXISTS"
+  | "MONTHLY_SIGNAL_LIMIT_REACHED"
+  | "PLAN_LIMIT_REACHED"
+  | "PAYLOAD_TOO_LARGE"
+  | "BILLING_UNAVAILABLE"
+  | "PURCHASE_INVALID"
   | "RATE_LIMITED"
   | "FORBIDDEN";
 
 export class ServiceError extends Error {
   constructor(
-    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503,
     readonly code: ErrorCode,
     message: string,
     readonly details?: ValidationIssue[],
+    readonly metadata?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ServiceError";
@@ -72,6 +93,22 @@ export interface IngestEventResult {
   eventId: string;
   deduplicated: boolean;
   deliveryQueued?: boolean;
+  usage?: SignalUsageResult;
+}
+
+export interface SignalUsageResult {
+  plan: "free" | "pro";
+  used: number;
+  limit: number;
+  courtesyLimit: number;
+  resetAt: string;
+}
+
+export interface PrivateWakeResult {
+  wakeId: string;
+  deduplicated: boolean;
+  deliveryQueued?: boolean;
+  usage: SignalUsageResult;
 }
 
 export interface SurfaceInput {
@@ -90,7 +127,26 @@ export class BellwireService {
     readonly repository: BellwireRepository,
     private readonly deliveryDispatcher?: DeliveryDispatcher,
     private readonly appleAuthService?: AppleAuthService,
+    private readonly enforcementMode: "disabled" | "shadow" | "enforce" = "disabled",
+    private readonly analytics?: ProductAnalytics,
   ) {}
+
+  async captureProductEvent(principal: Principal, input: unknown): Promise<void> {
+    this.requireSignedInUser(principal);
+    const body = asStrictRecord(input, ["event", "properties"]);
+    const event = readProductEvent(body.event);
+    if (!event) throw invalidRequest("Unsupported product analytics event");
+    if (!["paywall_viewed", "upgrade_clicked", "subscription_managed"].includes(event)) {
+      throw invalidRequest("This analytics event is server-managed");
+    }
+    let properties;
+    try {
+      properties = validateAnalyticsProperties(body.properties);
+    } catch (error) {
+      throw invalidRequest(error instanceof Error ? error.message : "Invalid analytics properties");
+    }
+    await this.analytics?.capture(principal.userId, event, properties);
+  }
 
   async saveAppleAuthorization(principal: Principal, input: unknown): Promise<void> {
     if (principal.kind !== "user") {
@@ -118,10 +174,15 @@ export class BellwireService {
       .find((project) => project.category === "demo" && project.name === "Bellwire Demo");
     if (existing) return { projectId: existing.id, created: false };
 
-    const project = await this.createProject(principal, {
+    const privateProject = await this.createProject(principal, {
       name: "Bellwire Demo",
       category: "demo",
       icon: "bell.and.waves.left.and.right",
+    });
+    const project = await this.repository.updateProject({
+      ...privateProject,
+      deliveryMode: "hosted",
+      updatedAt: new Date().toISOString(),
     });
     await this.createEventSchema(principal, project.id, {
       eventType: "deployment.completed",
@@ -158,6 +219,17 @@ export class BellwireService {
     const name = readNonEmptyString(body.name);
     if (!name) throw invalidRequest("Project name is required");
     const existingProjects = await this.repository.listProjects(principal.userId);
+    const entitlement = await this.repository.getAccountEntitlement(
+      principal.userId,
+      new Date().toISOString(),
+    );
+    if (
+      this.enforcementMode === "enforce" &&
+      existingProjects.filter((project) => project.status === "active").length >=
+        entitlement.limits.activeProjects
+    ) {
+      throw planLimitReached("active projects", entitlement);
+    }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     return this.repository.createProject({
@@ -170,6 +242,7 @@ export class BellwireService {
       displayOrder: nextDisplayOrder(existingProjects),
       category: readNonEmptyString(body.category) ?? "general",
       status: "active",
+      deliveryMode: "private",
       endpoint: `/v1/events/${id}`,
       createdAt: now,
       updatedAt: now,
@@ -180,15 +253,49 @@ export class BellwireService {
     return { projects: await this.repository.listProjects(principal.userId) };
   }
 
+  async getAccountEntitlement(principal: Principal): Promise<AccountEntitlement> {
+    this.requireSignedInUser(principal);
+    return this.repository.getAccountEntitlement(principal.userId, new Date().toISOString());
+  }
+
   async getProjectOverview(principal: Principal, projectId: string) {
     const project = await this.requireOwnedProject(principal, projectId);
-    const [eventSchemas, notificationSurfaces, liveSurfaces, deliveryHealth] = await Promise.all([
+    const [
+      eventSchemas,
+      notificationSurfaces,
+      liveSurfaces,
+      deliveryHealth,
+      readiness,
+      devices,
+    ] = await Promise.all([
       this.repository.listEventSchemas(projectId),
       this.repository.listNotificationSurfaces(projectId),
       this.repository.listLiveSurfaces(projectId),
       this.repository.getDeliveryHealth(projectId, deliveryHealthWindowStart()),
+      this.repository.listPrivateConnectionReadiness(projectId),
+      this.repository.listDevices(project.userId),
     ]);
-    return { ...project, eventSchemas, notificationSurfaces, liveSurfaces, deliveryHealth };
+    const activeInstallationIds = new Set(
+      devices.filter((device) => device.pushEnabled).map((device) => device.installationId),
+    );
+    const readinessKeys = await Promise.all(
+      readiness.map((item) => this.repository.getDeviceKey(item.deviceKeyId, project.userId)),
+    );
+    const readyDevices = readinessKeys.filter(
+      (key) => key && activeInstallationIds.has(key.installationId),
+    ).length;
+    return {
+      ...project,
+      eventSchemas,
+      notificationSurfaces,
+      liveSurfaces,
+      deliveryHealth,
+      privateReadiness: {
+        readyDevices,
+        activeDevices: activeInstallationIds.size,
+        connections: readiness,
+      },
+    };
   }
 
   async updateProject(principal: Principal, projectId: string, input: unknown): Promise<Project> {
@@ -199,6 +306,15 @@ export class BellwireService {
     const status = body.status === undefined ? project.status : body.status;
     if (status !== "active" && status !== "paused") {
       throw invalidRequest("Project status must be active or paused");
+    }
+    if (status === "active" && project.status === "paused" && this.enforcementMode === "enforce") {
+      const entitlement = await this.repository.getAccountEntitlement(
+        principal.userId,
+        new Date().toISOString(),
+      );
+      if (entitlement.activeProjects >= entitlement.limits.activeProjects) {
+        throw planLimitReached("active projects", entitlement);
+      }
     }
     return this.repository.updateProject({
       ...project,
@@ -244,6 +360,23 @@ export class BellwireService {
     if (apnsEnvironment !== "sandbox" && apnsEnvironment !== "production") {
       throw invalidRequest("APNs environment must be sandbox or production");
     }
+    const currentDevices = await this.repository.listDevices(principal.userId);
+    const existingDevice = currentDevices.find(
+      (device) => device.installationId === installationId.toLowerCase(),
+    );
+    if (
+      this.enforcementMode === "enforce" &&
+      body.pushEnabled !== false &&
+      !existingDevice?.pushEnabled
+    ) {
+      const entitlement = await this.repository.getAccountEntitlement(
+        principal.userId,
+        new Date().toISOString(),
+      );
+      if (entitlement.activeDevices >= entitlement.limits.activeDevices) {
+        throw planLimitReached("active devices", entitlement);
+      }
+    }
     const now = new Date().toISOString();
     return this.repository.saveDevice({
       id: crypto.randomUUID(),
@@ -262,35 +395,6 @@ export class BellwireService {
 
   async listDevices(principal: Principal) {
     return { devices: await this.repository.listDevices(principal.userId) };
-  }
-
-  async getNotificationPreference(principal: Principal) {
-    this.requireSignedInUser(principal);
-    return this.notificationPreference(principal.userId);
-  }
-
-  async updateNotificationPreference(principal: Principal, input: unknown) {
-    this.requireSignedInUser(principal);
-    const mode = readNotificationPrivacyMode(asRecord(input).mode);
-    if (!mode) {
-      throw invalidRequest(
-        "Notification mode must be generic, local_enrichment, or hosted_detailed",
-      );
-    }
-    return this.repository.saveNotificationPreference({
-      userId: principal.userId,
-      mode,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async getProjectNotificationPreference(
-    projectId: string,
-    bearerToken: string | undefined,
-  ) {
-    const project = await this.requireProject(projectId);
-    await this.requireIngestToken(projectId, bearerToken);
-    return this.notificationPreference(project.userId);
   }
 
   async deleteDevice(principal: Principal, deviceId: string): Promise<void> {
@@ -366,6 +470,23 @@ export class BellwireService {
       throw new ServiceError(403, "FORBIDDEN", "Only a connected Agent can publish a direct connection");
     }
     const body = asRecord(input);
+    const projectId = readUUID(body.projectId, "Project ID");
+    const project = await this.requireOwnedProject(principal, projectId);
+    if (project.deliveryMode !== "private") {
+      const pendingPrivateRequest = (
+        await this.repository.listDeliveryModeChangeRequests(principal.userId, "pending")
+      ).some((request) => request.projectId === projectId && request.toMode === "private");
+      if (!pendingPrivateRequest) {
+        throw new ServiceError(
+          409,
+          "PROJECT_HOSTED_MODE",
+          "Request Private delivery before publishing its Direct manifest",
+        );
+      }
+    }
+    if (body.manifestVersion !== 2) {
+      throw invalidRequest("Direct manifest version must be 2");
+    }
     const deviceKeyId = readUUID(body.deviceKeyId, "Device key ID");
     const deviceKey = await this.repository.getDeviceKey(deviceKeyId, principal.userId);
     if (!deviceKey) throw invalidRequest("Device key is not available for this account");
@@ -383,6 +504,8 @@ export class BellwireService {
       id: crypto.randomUUID(),
       userId: principal.userId,
       deviceKeyId,
+      projectId,
+      manifestVersion: 2,
       algorithm,
       ephemeralPublicKey,
       sealedBox,
@@ -408,15 +531,109 @@ export class BellwireService {
     return { envelopes: envelopes.map(withoutUserId) };
   }
 
-  async deleteDirectConnectionEnvelope(
+  async acknowledgeDirectConnectionEnvelope(
     principal: Principal,
     envelopeId: string,
-  ): Promise<void> {
+    input: unknown,
+  ): Promise<{ projectId: string; readyAt: string }> {
     this.requireSignedInUser(principal);
-    await this.repository.deleteDirectConnectionEnvelope(
+    const deviceKeyId = readUUID(asRecord(input).deviceKeyId, "Device key ID");
+    const readyAt = new Date().toISOString();
+    const projectId = await this.repository.acknowledgeDirectConnectionEnvelope(
       readUUID(envelopeId, "Envelope ID"),
       principal.userId,
+      deviceKeyId,
+      readyAt,
     );
+    if (!projectId) throw invalidRequest("Direct connection envelope is invalid or expired");
+    return { projectId, readyAt };
+  }
+
+  async createDeliveryModeChangeRequest(
+    principal: Principal,
+    projectId: string,
+    input: unknown,
+  ): Promise<DeliveryModeChangeRequest> {
+    if (principal.kind !== "agent" || !principal.tokenId) {
+      throw new ServiceError(403, "FORBIDDEN", "Only a connected Agent can request a mode change");
+    }
+    const project = await this.requireOwnedProject(principal, projectId);
+    const toMode = asRecord(input).toMode;
+    if (toMode !== "private" && toMode !== "hosted") {
+      throw invalidRequest("toMode must be private or hosted");
+    }
+    if (toMode === project.deliveryMode) {
+      throw invalidRequest(`Project already uses ${toMode} delivery`);
+    }
+    const now = new Date();
+    try {
+      return await this.repository.saveDeliveryModeChangeRequest({
+        id: crypto.randomUUID(),
+        projectId,
+        userId: principal.userId,
+        requestedByTokenId: principal.tokenId,
+        fromMode: project.deliveryMode,
+        toMode,
+        status: "pending",
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof Error && /pending/iu.test(error.message)) {
+        throw new ServiceError(
+          409,
+          "PENDING_MODE_REQUEST_EXISTS",
+          "A delivery mode request is already pending",
+        );
+      }
+      throw error;
+    }
+  }
+
+  async listDeliveryModeChangeRequests(
+    principal: Principal,
+    status?: string,
+  ): Promise<{ requests: DeliveryModeChangeRequest[] }> {
+    this.requireSignedInUser(principal);
+    const parsedStatus = status === undefined
+      ? undefined
+      : readDeliveryModeRequestStatus(status);
+    if (status !== undefined && !parsedStatus) {
+      throw invalidRequest("Invalid delivery mode request status");
+    }
+    return {
+      requests: await this.repository.listDeliveryModeChangeRequests(
+        principal.userId,
+        parsedStatus,
+      ),
+    };
+  }
+
+  async resolveDeliveryModeChangeRequest(
+    principal: Principal,
+    requestId: string,
+    approved: boolean,
+  ): Promise<DeliveryModeChangeRequest> {
+    this.requireSignedInUser(principal);
+    try {
+      const request = await this.repository.resolveDeliveryModeChangeRequest(
+        readUUID(requestId, "Request ID"),
+        principal.userId,
+        approved,
+        new Date().toISOString(),
+      );
+      if (!request) throw invalidRequest("Delivery mode request is not pending");
+      return request;
+    } catch (error) {
+      if (error instanceof Error && /PRIVATE_READINESS_REQUIRED/u.test(error.message)) {
+        throw new ServiceError(
+          409,
+          "PRIVATE_READINESS_REQUIRED",
+          "At least one device must acknowledge Direct manifest v2 before enabling Private",
+        );
+      }
+      throw error;
+    }
   }
 
   async listAgentConnections(principal: Principal): Promise<{ connections: AgentConnection[] }> {
@@ -450,6 +667,7 @@ export class BellwireService {
     input: CreateEventSchemaInput,
   ): Promise<EventSchema> {
     const project = await this.requireOwnedProject(principal, projectId);
+    this.requireHostedProject(project);
     const eventType = parseEventType(input.eventType);
     const fields = parseFields(input.fields);
     const schema: EventSchema = {
@@ -479,7 +697,8 @@ export class BellwireService {
     projectId: string,
     input: SurfaceInput,
   ): Promise<NotificationSurface> {
-    await this.requireOwnedProject(principal, projectId);
+    const project = await this.requireOwnedProject(principal, projectId);
+    this.requireHostedProject(project);
     const eventType = parseEventType(input.eventType);
     const schema = await this.repository.getEventSchema(projectId, eventType);
     if (!schema) {
@@ -522,8 +741,9 @@ export class BellwireService {
     surfaceKeyValue: string,
     input: unknown,
   ): Promise<LiveSurface> {
-    await this.requireOwnedProject(principal, projectId);
-    return this.saveLiveSurface(projectId, surfaceKeyValue, input);
+    const project = await this.requireOwnedProject(principal, projectId);
+    this.requireHostedProject(project);
+    return this.saveLiveSurface(project, surfaceKeyValue, input);
   }
 
   async upsertLiveSurfaceFromIngestToken(
@@ -532,24 +752,31 @@ export class BellwireService {
     surfaceKeyValue: string,
     input: unknown,
   ): Promise<LiveSurface> {
+    const project = await this.requireProject(projectId);
+    this.requireHostedProject(project);
     const storedToken = await this.requireIngestToken(projectId, bearerToken);
+    const entitlement = await this.repository.getAccountEntitlement(
+      project.userId,
+      new Date().toISOString(),
+    );
     const allowed = await this.repository.consumeRateLimit(
       `${projectId}:${storedToken.id}:surface`,
-      120,
+      entitlement.limits.ingestPerMinute,
       60,
     );
     if (!allowed) {
       throw new ServiceError(429, "RATE_LIMITED", "Surface update rate limit exceeded");
     }
     await this.repository.markIngestTokenUsed(storedToken.id, new Date().toISOString());
-    return this.saveLiveSurface(projectId, surfaceKeyValue, input);
+    return this.saveLiveSurface(project, surfaceKeyValue, input);
   }
 
   private async saveLiveSurface(
-    projectId: string,
+    project: Project,
     surfaceKeyValue: string,
     input: unknown,
   ): Promise<LiveSurface> {
+    const projectId = project.id;
     const surfaceKey = parseSurfaceKey(surfaceKeyValue);
     const body = asRecord(input);
     const type = parseLiveSurfaceType(body.type);
@@ -558,13 +785,10 @@ export class BellwireService {
     const content = parseLiveSurfaceContent(type, body);
     const action = parseLiveSurfaceAction(body.action);
     const existing = await this.repository.getLiveSurface(projectId, surfaceKey);
-    if (existing && sameLiveSurface(existing, { type, title, subtitle, content, action })) {
-      return existing;
-    }
     const now = new Date().toISOString();
     const displayOrder = existing?.displayOrder
       ?? nextDisplayOrder(await this.repository.listLiveSurfaces(projectId));
-    return this.repository.saveLiveSurface({
+    const accepted = await this.repository.acceptHostedSurface({
       id: crypto.randomUUID(),
       projectId,
       surfaceKey,
@@ -577,7 +801,25 @@ export class BellwireService {
       version: 1,
       createdAt: now,
       updatedAt: now,
-    });
+    }, this.enforcementMode);
+    if (accepted.quotaExceeded) {
+      await this.captureQuotaEvent(project.userId, project.deliveryMode, accepted, "rejected");
+      throw monthlySignalLimitReached(accepted);
+    }
+    if (accepted.surfaceLimitExceeded) {
+      throw new ServiceError(
+        409,
+        "PLAN_LIMIT_REACHED",
+        `Your ${accepted.plan} plan Surface limit has been reached`,
+        undefined,
+        { plan: accepted.plan, resource: "surfaces" },
+      );
+    }
+    if (!accepted.surface) throw new Error("Hosted Surface was not persisted");
+    if (accepted.created) {
+      await this.captureQuotaEvent(project.userId, project.deliveryMode, accepted);
+    }
+    return accepted.surface;
   }
 
   async listLiveSurfaces(principal: Principal, projectId?: string) {
@@ -634,7 +876,8 @@ export class BellwireService {
     projectId: string,
     input: unknown,
   ): Promise<Omit<IngestToken, "tokenHash"> & { token: string }> {
-    await this.requireOwnedProject(principal, projectId);
+    const project = await this.requireOwnedProject(principal, projectId);
+    this.requireHostedProject(project);
     const body = asRecord(input);
     const name = readNonEmptyString(body.name);
     if (!name) throw invalidRequest("Token name is required");
@@ -663,6 +906,111 @@ export class BellwireService {
     await this.repository.revokeIngestToken(tokenId, new Date().toISOString());
   }
 
+  async createPrivateWakeToken(
+    principal: Principal,
+    projectId: string,
+    input: unknown,
+  ): Promise<Omit<PrivateWakeToken, "tokenHash"> & { token: string }> {
+    const project = await this.requireOwnedProject(principal, projectId);
+    this.requirePrivateProject(project);
+    const body = asRecord(input);
+    const name = readNonEmptyString(body.name);
+    if (!name || name.length > 80) {
+      throw invalidRequest("Token name must contain 1 to 80 characters");
+    }
+    const expiresAt = readDateTime(body.expiresAt);
+    const token = createOpaqueToken("wake");
+    const record: PrivateWakeToken = {
+      id: crypto.randomUUID(),
+      projectId,
+      name,
+      tokenHash: await hashSecret(token),
+      scope: "wake:send",
+      createdAt: new Date().toISOString(),
+      ...(expiresAt ? { expiresAt } : {}),
+    };
+    await this.repository.savePrivateWakeToken(record);
+    const { tokenHash, ...publicRecord } = record;
+    void tokenHash;
+    return { ...publicRecord, token };
+  }
+
+  async revokePrivateWakeToken(
+    principal: Principal,
+    projectId: string,
+    tokenId: string,
+  ): Promise<void> {
+    await this.requireOwnedProject(principal, projectId);
+    const tokens = await this.repository.listPrivateWakeTokens(projectId);
+    if (!tokens.some((token) => token.id === tokenId)) {
+      throw new ServiceError(404, "INVALID_TOKEN", "Private wake token not found");
+    }
+    await this.repository.revokePrivateWakeToken(tokenId, new Date().toISOString());
+  }
+
+  async ingestPrivateWake(
+    projectId: string,
+    bearerToken: string | undefined,
+    idempotencyKeyValue: string | undefined,
+    input: unknown,
+  ): Promise<PrivateWakeResult> {
+    const project = await this.requireProject(projectId);
+    this.requirePrivateProject(project);
+    if (project.status !== "active") {
+      throw new ServiceError(409, "PROJECT_PAUSED", "Project is paused");
+    }
+    const storedToken = await this.requirePrivateWakeToken(projectId, bearerToken);
+    const entitlement = await this.repository.getAccountEntitlement(
+      project.userId,
+      new Date().toISOString(),
+    );
+    const allowed = await this.repository.consumeRateLimit(
+      `${projectId}:${storedToken.id}:wake`,
+      entitlement.limits.ingestPerMinute,
+      60,
+    );
+    if (!allowed) {
+      throw new ServiceError(429, "RATE_LIMITED", "Private wake rate limit exceeded");
+    }
+
+    const idempotencyKey = readIdempotencyKey(idempotencyKeyValue);
+    const body = asStrictRecord(input, ["reference", "priority"]);
+    const reference = readOpaqueReference(body.reference);
+    const priority = body.priority === undefined ? "normal" : body.priority;
+    if (priority !== "normal" && priority !== "high") {
+      throw invalidRequest("priority must be normal or high");
+    }
+
+    const now = new Date();
+    const metered = await this.repository.acceptPrivateWake({
+      id: crypto.randomUUID(),
+      projectId,
+      idempotencyKeyHash: await hashSecret(idempotencyKey),
+      reference,
+      priority,
+      receivedAt: now.toISOString(),
+      referenceExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+    }, this.enforcementMode);
+    if (metered.quotaExceeded) {
+      await this.captureQuotaEvent(project.userId, project.deliveryMode, metered, "rejected");
+      throw monthlySignalLimitReached(metered);
+    }
+    if (!metered.wake) throw new Error("Private wake was not persisted");
+    await this.repository.markPrivateWakeTokenUsed(storedToken.id, now.toISOString());
+    const deliveryQueued = metered.created
+      ? await this.dispatchPrivateWake(project, metered.wake)
+      : undefined;
+    if (metered.created) {
+      await this.captureQuotaEvent(project.userId, project.deliveryMode, metered);
+    }
+    return {
+      wakeId: metered.wake.id,
+      deduplicated: !metered.created,
+      ...(deliveryQueued === undefined ? {} : { deliveryQueued }),
+      usage: signalUsageResult(metered),
+    };
+  }
+
   async ingestEvent(
     projectId: string,
     bearerToken: string | undefined,
@@ -670,25 +1018,31 @@ export class BellwireService {
     input: IngestEventInput,
   ): Promise<IngestEventResult> {
     const project = await this.requireProject(projectId);
+    this.requireHostedProject(project);
+    if (project.status !== "active") {
+      throw new ServiceError(409, "PROJECT_PAUSED", "Project is paused");
+    }
     const storedToken = await this.requireIngestToken(projectId, bearerToken);
+    const entitlement = await this.repository.getAccountEntitlement(
+      project.userId,
+      new Date().toISOString(),
+    );
     const allowed = await this.repository.consumeRateLimit(
       `${projectId}:${storedToken.id}`,
-      60,
+      entitlement.limits.ingestPerMinute,
       60,
     );
     if (!allowed) {
       throw new ServiceError(429, "RATE_LIMITED", "Event rate limit exceeded");
     }
-    const idempotencyKey = readNonEmptyString(idempotencyKeyValue);
-    if (!idempotencyKey) {
-      throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");
-    }
+    const idempotencyKey = readIdempotencyKey(idempotencyKeyValue);
     await this.repository.markIngestTokenUsed(storedToken.id, new Date().toISOString());
     return this.acceptEvent(project, idempotencyKey, input);
   }
 
   async sendTestEvent(principal: Principal, projectId: string, input: IngestEventInput) {
     const project = await this.requireOwnedProject(principal, projectId);
+    this.requireHostedProject(project);
     return this.acceptEvent(project, `test-${crypto.randomUUID()}`, input);
   }
 
@@ -698,6 +1052,13 @@ export class BellwireService {
     options: { cursor?: string; limit?: number; eventType?: string; unreadOnly?: boolean },
   ) {
     await this.requireOwnedProject(principal, projectId);
+    if (options.cursor) {
+      try {
+        decodeEventCursor(options.cursor);
+      } catch {
+        throw new ServiceError(400, "INVALID_CURSOR", "Invalid Event cursor");
+      }
+    }
     const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
     const page = await this.repository.listEvents(projectId, { ...options, limit });
     return this.redactEventPage(page);
@@ -766,6 +1127,44 @@ export class BellwireService {
     return this.repository.getDeliveryHealth(projectId, deliveryHealthWindowStart());
   }
 
+  async exportHostedProject(principal: Principal, projectId: string) {
+    const project = await this.requireOwnedProject(principal, projectId);
+    this.requireHostedProject(project);
+    const entitlement = await this.repository.getAccountEntitlement(
+      principal.userId,
+      new Date().toISOString(),
+    );
+    if (entitlement.plan !== "pro") {
+      throw planLimitReached("project export", entitlement);
+    }
+
+    const events: Array<BellwireEvent & { deliveries: Delivery[] }> = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.repository.listEvents(project.id, { cursor, limit: 100 });
+      const exported = await Promise.all(
+        page.events.map(async (event) => ({
+          ...event,
+          deliveries: await this.repository.listDeliveries(event.id),
+        })),
+      );
+      events.push(...exported);
+      cursor = page.nextCursor;
+      if (events.length >= 10_000) break;
+    } while (cursor);
+
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      project: {
+        id: project.id,
+        name: project.name,
+        deliveryMode: project.deliveryMode,
+      },
+      events: events.slice(0, 10_000),
+    };
+  }
+
   async getDeliveries(principal: Principal, eventId: string): Promise<{ deliveries: Delivery[] }> {
     const event = await this.repository.getEvent(eventId);
     if (!event) throw new ServiceError(404, "EVENT_NOT_FOUND", "Event not found");
@@ -788,7 +1187,13 @@ export class BellwireService {
         `No active schema exists for event type ${eventType}`,
       );
     }
-    const data = asRecord(input.data);
+    if (!input.data || typeof input.data !== "object" || Array.isArray(input.data)) {
+      throw invalidRequest("Event data must be a JSON object");
+    }
+    const data = input.data as Record<string, unknown>;
+    if (new TextEncoder().encode(JSON.stringify(data)).byteLength > 8_192) {
+      throw new ServiceError(413, "PAYLOAD_TOO_LARGE", "Event data must not exceed 8192 bytes");
+    }
     const occurredAt = readDateTime(input.occurredAt);
     const issues = validateEventData(schema.fields, data);
     if (!occurredAt) issues.push({ field: "occurredAt", message: "must be a valid datetime string" });
@@ -804,7 +1209,7 @@ export class BellwireService {
       id: crypto.randomUUID(),
       projectId: project.id,
       eventType,
-      idempotencyKey,
+      idempotencyKeyHash: await hashSecret(idempotencyKey),
       data,
       sensitiveFields: Object.entries(schema.fields)
         .filter(([, definition]) => definition.sensitive === true)
@@ -813,16 +1218,25 @@ export class BellwireService {
       receivedAt: new Date().toISOString(),
       status: "accepted",
     };
-    const saved = await this.repository.createEventIfAbsent(event);
+    const saved = await this.repository.acceptHostedEvent(event, this.enforcementMode);
+    if (saved.quotaExceeded) {
+      await this.captureQuotaEvent(project.userId, project.deliveryMode, saved, "rejected");
+      throw monthlySignalLimitReached(saved);
+    }
+    if (!saved.event) throw new Error("Hosted event was not persisted");
     const previousQueueFailure = !saved.created && (await this.repository.listDeliveries(saved.event.id))
       .some((delivery) => delivery.errorCode === "retryable:QueueUnavailable");
     const deliveryQueued = project.status === "active" && (saved.created || previousQueueFailure)
       ? await this.dispatchEvent(project, saved.event)
       : undefined;
+    if (saved.created) {
+      await this.captureQuotaEvent(project.userId, project.deliveryMode, saved);
+    }
     return {
       eventId: saved.event.id,
       deduplicated: !saved.created,
       ...(deliveryQueued === undefined ? {} : { deliveryQueued }),
+      usage: signalUsageResult(saved),
     };
   }
 
@@ -854,6 +1268,39 @@ export class BellwireService {
         });
         if (result.delivery.status !== "queued" || result.delivery.attemptCount !== 0) return;
         await this.repository.recordQueueUnavailable(result.delivery, now, message);
+      }));
+      return false;
+    }
+  }
+
+  private async dispatchPrivateWake(
+    project: Project,
+    wake: PrivateWake,
+  ): Promise<boolean | undefined> {
+    if (!this.deliveryDispatcher) return undefined;
+    const devices = (await this.repository.listDevices(project.userId))
+      .filter((device) => device.pushEnabled);
+    if (devices.length === 0) return undefined;
+    try {
+      await this.deliveryDispatcher.enqueuePrivateWake(wake);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 240) : "Queue unavailable";
+      console.error("Private wake queue enqueue failed", message);
+      const now = new Date().toISOString();
+      await Promise.allSettled(devices.map(async (device) => {
+        await this.repository.createPrivateWakeDeliveryIfAbsent({
+          id: crypto.randomUUID(),
+          wakeId: wake.id,
+          deviceId: device.id,
+          channel: "apns",
+          status: "failed",
+          attemptCount: 0,
+          errorCode: "retryable:QueueUnavailable",
+          errorMessage: message,
+          queuedAt: now,
+          updatedAt: now,
+        });
       }));
       return false;
     }
@@ -898,16 +1345,7 @@ export class BellwireService {
     return project;
   }
 
-  private async notificationPreference(userId: string) {
-    return (await this.repository.getNotificationPreference(userId)) ?? {
-      userId,
-      mode: "local_enrichment" as const,
-      updatedAt: new Date(0).toISOString(),
-    };
-  }
-
   private async requireIngestToken(projectId: string, bearerToken: string | undefined) {
-    await this.requireProject(projectId);
     const rawToken = readBearerToken(bearerToken);
     if (!rawToken) throw invalidToken();
     const storedToken = await this.repository.findIngestTokenByHash(
@@ -915,6 +1353,17 @@ export class BellwireService {
       await hashSecret(rawToken),
     );
     if (!storedToken) throw invalidToken();
+    return storedToken;
+  }
+
+  private async requirePrivateWakeToken(projectId: string, bearerToken: string | undefined) {
+    const rawToken = readBearerToken(bearerToken);
+    if (!rawToken?.startsWith("bw_wake_")) throw invalidToken("Invalid private wake token");
+    const storedToken = await this.repository.findPrivateWakeTokenByHash(
+      projectId,
+      await hashSecret(rawToken),
+    );
+    if (!storedToken) throw invalidToken("Invalid private wake token");
     return storedToken;
   }
 
@@ -931,53 +1380,118 @@ export class BellwireService {
       throw new ServiceError(403, "FORBIDDEN", "This action requires a signed-in user");
     }
   }
+
+  private requireHostedProject(project: Project): void {
+    if (project.deliveryMode !== "hosted") {
+      throw new ServiceError(409, "PROJECT_PRIVATE_MODE", "Project uses Private delivery");
+    }
+  }
+
+  private requirePrivateProject(project: Project): void {
+    if (project.deliveryMode !== "private") {
+      throw new ServiceError(409, "PROJECT_HOSTED_MODE", "Project uses Hosted delivery");
+    }
+  }
+
+  private async captureQuotaEvent(
+    userId: string,
+    deliveryMode: ProjectDeliveryMode,
+    value: {
+      plan: "free" | "pro";
+      acceptedSignals: number;
+      signalLimit: number;
+    },
+    state?: "rejected",
+  ): Promise<void> {
+    if (!this.analytics) return;
+    const usagePercent = Math.round((value.acceptedSignals / value.signalLimit) * 10_000) / 100;
+    const properties = { plan: value.plan, deliveryMode, usagePercent };
+    if (state === "rejected") {
+      await this.analytics.capture(userId, "quota_rejected", properties);
+    } else if (value.acceptedSignals === Math.ceil(value.signalLimit * 0.8)) {
+      await this.analytics.capture(userId, "quota_warning_80", properties);
+    } else if (value.acceptedSignals === value.signalLimit) {
+      await this.analytics.capture(userId, "quota_reached_100", properties);
+    } else if (value.acceptedSignals === value.signalLimit + 1) {
+      await this.analytics.capture(userId, "quota_grace_used", properties);
+    }
+  }
 }
 
 function deliveryHealthWindowStart(): string {
   return new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
 }
 
-function readNotificationPrivacyMode(value: unknown): NotificationPrivacyMode | undefined {
-  return value === "generic" || value === "local_enrichment" || value === "hosted_detailed"
-    ? value
-    : undefined;
-}
-
 function eventSensitiveFields(event: BellwireEvent): string[] {
   return event.sensitiveFields ?? Object.keys(event.data);
-}
-
-function sameLiveSurface(
-  existing: LiveSurface,
-  next: Pick<LiveSurface, "type" | "title" | "subtitle" | "content" | "action">,
-): boolean {
-  return existing.type === next.type
-    && existing.title === next.title
-    && existing.subtitle === next.subtitle
-    && stableJson(existing.content) === stableJson(next.content)
-    && stableJson(existing.action) === stableJson(next.action);
-}
-
-function stableJson(value: unknown): string | undefined {
-  return JSON.stringify(sortJsonObjectKeys(value));
-}
-
-function sortJsonObjectKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJsonObjectKeys);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, nestedValue]) => [key, sortJsonObjectKeys(nestedValue)]),
-  );
 }
 
 function invalidRequest(message: string): ServiceError {
   return new ServiceError(400, "INVALID_REQUEST", message);
 }
 
-function invalidToken(): ServiceError {
-  return new ServiceError(401, "INVALID_TOKEN", "Invalid ingest token");
+function readDeliveryModeRequestStatus(
+  value: unknown,
+): DeliveryModeChangeRequest["status"] | undefined {
+  return value === "pending" || value === "approved" || value === "rejected" || value === "expired"
+    ? value
+    : undefined;
+}
+
+function planLimitReached(resource: string, entitlement: AccountEntitlement): ServiceError {
+  return new ServiceError(
+    409,
+    "PLAN_LIMIT_REACHED",
+    `Your ${entitlement.plan} plan limit for ${resource} has been reached`,
+    undefined,
+    {
+      plan: entitlement.plan,
+      resource,
+      limits: entitlement.limits,
+    },
+  );
+}
+
+function monthlySignalLimitReached(value: {
+  plan: "free" | "pro";
+  acceptedSignals: number;
+  signalLimit: number;
+  courtesyLimit: number;
+  resetAt: string;
+}): ServiceError {
+  return new ServiceError(
+    429,
+    "MONTHLY_SIGNAL_LIMIT_REACHED",
+    "Monthly Signal limit reached",
+    undefined,
+    {
+      plan: value.plan,
+      limit: value.signalLimit,
+      courtesyLimit: value.courtesyLimit,
+      used: value.acceptedSignals,
+      resetAt: value.resetAt,
+    },
+  );
+}
+
+function signalUsageResult(value: {
+  plan: "free" | "pro";
+  acceptedSignals: number;
+  signalLimit: number;
+  courtesyLimit: number;
+  resetAt: string;
+}): SignalUsageResult {
+  return {
+    plan: value.plan,
+    used: value.acceptedSignals,
+    limit: value.signalLimit,
+    courtesyLimit: value.courtesyLimit,
+    resetAt: value.resetAt,
+  };
+}
+
+function invalidToken(message = "Invalid ingest token"): ServiceError {
+  return new ServiceError(401, "INVALID_TOKEN", message);
 }
 
 function invalidBindingCode(): ServiceError {
@@ -989,10 +1503,39 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function asStrictRecord(value: unknown, allowedKeys: readonly string[]): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidRequest("A JSON object is required");
+  }
+  const record = value as Record<string, unknown>;
+  const unknownKey = Object.keys(record).find((key) => !allowedKeys.includes(key));
+  if (unknownKey) throw invalidRequest(`Unknown field: ${unknownKey}`);
+  return record;
+}
+
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readIdempotencyKey(value: unknown): string {
+  const key = readNonEmptyString(value);
+  if (!key) {
+    throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");
+  }
+  if (key.length > 200) throw invalidRequest("Idempotency-Key must be at most 200 characters");
+  return key;
+}
+
+function readOpaqueReference(value: unknown): string {
+  const reference = readNonEmptyString(value);
+  if (!reference || !/^[A-Za-z0-9_-]{22,200}$/u.test(reference)) {
+    throw invalidRequest(
+      "reference must be a 22 to 200 character URL-safe opaque value",
+    );
+  }
+  return reference;
 }
 
 function readUUID(value: unknown, name: string): string {
@@ -1069,6 +1612,8 @@ function withoutUserId(value: DirectConnectionEnvelope): Omit<DirectConnectionEn
   return {
     id: value.id,
     deviceKeyId: value.deviceKeyId,
+    projectId: value.projectId,
+    manifestVersion: value.manifestVersion,
     algorithm: value.algorithm,
     ephemeralPublicKey: value.ephemeralPublicKey,
     sealedBox: value.sealedBox,

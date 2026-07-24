@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
+  AccountEntitlement,
   BellwireEvent,
   AgentToken,
+  AppleTransactionRecord,
   Delivery,
+  DeliveryModeChangeRequest,
   DeliveryHealth,
   Device,
   DeviceBinding,
@@ -13,15 +16,21 @@ import type {
   EventSchema,
   IngestToken,
   LiveSurface,
-  NotificationPreference,
+  MeteredEventWrite,
+  MeteredLiveSurfaceWrite,
+  MeteredPrivateWakeWrite,
   NotificationSurface,
+  PrivateConnectionReadiness,
+  PrivateWake,
+  PrivateWakeDelivery,
+  PrivateWakeToken,
   Project,
 } from "../domain/models";
 import type {
   BellwireRepository,
   CreateDeliveryResult,
-  CreateEventResult,
 } from "./bellwire-repository";
+import { decodeEventCursor, encodeEventCursor } from "./event-cursor";
 
 function copy<T>(value: T): T {
   return structuredClone(value);
@@ -30,21 +39,30 @@ function copy<T>(value: T): T {
 export class InMemoryBellwireRepository implements BellwireRepository {
   private readonly projects = new Map<string, Project>();
   private readonly devices = new Map<string, Device>();
-  private readonly notificationPreferences = new Map<string, NotificationPreference>();
   private readonly deviceBindings = new Map<string, DeviceBinding>();
   private readonly deviceKeys = new Map<string, DeviceKey>();
   private readonly directConnectionEnvelopes = new Map<string, DirectConnectionEnvelope>();
+  private readonly privateConnectionReadiness = new Map<string, PrivateConnectionReadiness>();
+  private readonly deliveryModeChangeRequests = new Map<string, DeliveryModeChangeRequest>();
   private readonly agentTokens = new Map<string, AgentToken>();
   private readonly eventSchemas = new Map<string, EventSchema[]>();
   private readonly surfaces = new Map<string, NotificationSurface[]>();
   private readonly liveSurfaces = new Map<string, LiveSurface>();
   private readonly ingestTokens = new Map<string, IngestToken>();
+  private readonly privateWakeTokens = new Map<string, PrivateWakeToken>();
   private readonly events = new Map<string, BellwireEvent>();
   private readonly eventsByIdempotencyKey = new Map<string, string>();
+  private readonly privateWakes = new Map<string, PrivateWake>();
+  private readonly privateWakesByIdempotencyKey = new Map<string, string>();
+  private readonly privateWakeDeliveries = new Map<string, PrivateWakeDelivery>();
   private readonly deliveries = new Map<string, Delivery>();
   private readonly deliveryByEventDevice = new Map<string, string>();
   private readonly rateLimits = new Map<string, { count: number; startedAt: number }>();
   private readonly appleRefreshTokens = new Map<string, string>();
+  private readonly appleTransactions = new Map<string, AppleTransactionRecord>();
+  private readonly appleNotificationReceipts = new Set<string>();
+  private readonly entitlements = new Map<string, AppleTransactionRecord>();
+  private readonly signalUsage = new Map<string, number>();
 
   async deleteAccount(userId: string): Promise<void> {
     const projectIds = [...this.projects.values()]
@@ -61,8 +79,8 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     for (const [tokenId, token] of this.agentTokens) {
       if (token.userId === userId) this.agentTokens.delete(tokenId);
     }
-    this.notificationPreferences.delete(userId);
     this.appleRefreshTokens.delete(userId);
+    this.entitlements.delete(userId);
   }
 
   async saveAppleRefreshToken(userId: string, encryptedRefreshToken: string): Promise<void> {
@@ -121,6 +139,18 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     for (const [tokenId, token] of this.ingestTokens) {
       if (token.projectId === projectId) this.ingestTokens.delete(tokenId);
     }
+    for (const [tokenId, token] of this.privateWakeTokens) {
+      if (token.projectId === projectId) this.privateWakeTokens.delete(tokenId);
+    }
+    for (const [envelopeId, envelope] of this.directConnectionEnvelopes) {
+      if (envelope.projectId === projectId) this.directConnectionEnvelopes.delete(envelopeId);
+    }
+    for (const [key, readiness] of this.privateConnectionReadiness) {
+      if (readiness.projectId === projectId) this.privateConnectionReadiness.delete(key);
+    }
+    for (const [requestId, request] of this.deliveryModeChangeRequests) {
+      if (request.projectId === projectId) this.deliveryModeChangeRequests.delete(requestId);
+    }
 
     const deletedEventIds = new Set<string>();
     for (const [eventId, event] of this.events) {
@@ -137,6 +167,19 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     }
     for (const [key, deliveryId] of this.deliveryByEventDevice) {
       if (!this.deliveries.has(deliveryId)) this.deliveryByEventDevice.delete(key);
+    }
+    const deletedWakeIds = new Set<string>();
+    for (const [wakeId, wake] of this.privateWakes) {
+      if (wake.projectId === projectId) {
+        deletedWakeIds.add(wakeId);
+        this.privateWakes.delete(wakeId);
+      }
+    }
+    for (const [key, wakeId] of this.privateWakesByIdempotencyKey) {
+      if (deletedWakeIds.has(wakeId)) this.privateWakesByIdempotencyKey.delete(key);
+    }
+    for (const [deliveryId, delivery] of this.privateWakeDeliveries) {
+      if (deletedWakeIds.has(delivery.wakeId)) this.privateWakeDeliveries.delete(deliveryId);
     }
   }
 
@@ -167,18 +210,24 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   }
 
   async deleteDevice(deviceId: string): Promise<void> {
+    const device = this.devices.get(deviceId);
     this.devices.delete(deviceId);
-  }
-
-  async getNotificationPreference(userId: string): Promise<NotificationPreference | undefined> {
-    return this.cloneFrom(this.notificationPreferences, userId);
-  }
-
-  async saveNotificationPreference(
-    preference: NotificationPreference,
-  ): Promise<NotificationPreference> {
-    this.notificationPreferences.set(preference.userId, copy(preference));
-    return copy(preference);
+    if (!device) return;
+    const deletedKeyIds = new Set<string>();
+    for (const [keyId, key] of this.deviceKeys) {
+      if (key.userId === device.userId && key.installationId === device.installationId) {
+        deletedKeyIds.add(keyId);
+        this.deviceKeys.delete(keyId);
+      }
+    }
+    for (const [envelopeId, envelope] of this.directConnectionEnvelopes) {
+      if (deletedKeyIds.has(envelope.deviceKeyId)) this.directConnectionEnvelopes.delete(envelopeId);
+    }
+    for (const [readinessKey, readiness] of this.privateConnectionReadiness) {
+      if (deletedKeyIds.has(readiness.deviceKeyId)) {
+        this.privateConnectionReadiness.delete(readinessKey);
+      }
+    }
   }
 
   async saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding> {
@@ -284,9 +333,129 @@ export class InMemoryBellwireRepository implements BellwireRepository {
       .map(copy);
   }
 
-  async deleteDirectConnectionEnvelope(envelopeId: string, userId: string): Promise<void> {
+  async acknowledgeDirectConnectionEnvelope(
+    envelopeId: string,
+    userId: string,
+    deviceKeyId: string,
+    verifiedAt: string,
+  ): Promise<string | undefined> {
     const envelope = this.directConnectionEnvelopes.get(envelopeId);
-    if (envelope?.userId === userId) this.directConnectionEnvelopes.delete(envelopeId);
+    if (
+      !envelope ||
+      envelope.userId !== userId ||
+      envelope.deviceKeyId !== deviceKeyId ||
+      envelope.expiresAt <= verifiedAt
+    ) {
+      return undefined;
+    }
+    this.privateConnectionReadiness.set(
+      this.projectTypeKey(envelope.projectId, deviceKeyId),
+      {
+        projectId: envelope.projectId,
+        deviceKeyId,
+        userId,
+        manifestVersion: 2,
+        readyAt: verifiedAt,
+        lastVerifiedAt: verifiedAt,
+      },
+    );
+    this.directConnectionEnvelopes.delete(envelopeId);
+    return envelope.projectId;
+  }
+
+  async getPrivateConnectionReadiness(
+    projectId: string,
+    deviceKeyId: string,
+  ): Promise<PrivateConnectionReadiness | undefined> {
+    return this.cloneFrom(
+      this.privateConnectionReadiness,
+      this.projectTypeKey(projectId, deviceKeyId),
+    );
+  }
+
+  async listPrivateConnectionReadiness(
+    projectId: string,
+  ): Promise<PrivateConnectionReadiness[]> {
+    return [...this.privateConnectionReadiness.values()]
+      .filter((readiness) => readiness.projectId === projectId)
+      .map(copy);
+  }
+
+  async saveDeliveryModeChangeRequest(
+    request: DeliveryModeChangeRequest,
+  ): Promise<DeliveryModeChangeRequest> {
+    const pending = [...this.deliveryModeChangeRequests.values()].find(
+      (candidate) => candidate.projectId === request.projectId && candidate.status === "pending",
+    );
+    if (pending) throw new Error("Pending delivery mode request already exists");
+    this.deliveryModeChangeRequests.set(request.id, copy(request));
+    return copy(request);
+  }
+
+  async listDeliveryModeChangeRequests(
+    userId: string,
+    status?: DeliveryModeChangeRequest["status"],
+  ): Promise<DeliveryModeChangeRequest[]> {
+    return [...this.deliveryModeChangeRequests.values()]
+      .filter((request) => request.userId === userId && (!status || request.status === status))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(copy);
+  }
+
+  async resolveDeliveryModeChangeRequest(
+    requestId: string,
+    userId: string,
+    approved: boolean,
+    resolvedAt: string,
+  ): Promise<DeliveryModeChangeRequest | undefined> {
+    const request = this.deliveryModeChangeRequests.get(requestId);
+    if (!request || request.userId !== userId || request.status !== "pending") return undefined;
+    if (request.expiresAt <= resolvedAt) {
+      const expired = { ...request, status: "expired" as const, resolvedAt };
+      this.deliveryModeChangeRequests.set(request.id, expired);
+      return copy(expired);
+    }
+    if (approved) {
+      if (
+        request.toMode === "private" &&
+        ![...this.privateConnectionReadiness.values()].some((readiness) => {
+          if (readiness.projectId !== request.projectId) return false;
+          const key = this.deviceKeys.get(readiness.deviceKeyId);
+          if (!key || key.revokedAt) return false;
+          return [...this.devices.values()].some(
+            (device) =>
+              device.userId === request.userId
+              && device.installationId === key.installationId
+              && device.pushEnabled,
+          );
+        })
+      ) {
+        throw new Error("PRIVATE_READINESS_REQUIRED");
+      }
+      const project = this.projects.get(request.projectId);
+      if (!project) return undefined;
+      this.projects.set(project.id, { ...project, deliveryMode: request.toMode, updatedAt: resolvedAt });
+      if (request.toMode === "private") {
+        for (const [id, token] of this.ingestTokens) {
+          if (token.projectId === request.projectId && !token.revokedAt) {
+            this.ingestTokens.set(id, { ...token, revokedAt: resolvedAt });
+          }
+        }
+      } else {
+        for (const [id, token] of this.privateWakeTokens) {
+          if (token.projectId === request.projectId && !token.revokedAt) {
+            this.privateWakeTokens.set(id, { ...token, revokedAt: resolvedAt });
+          }
+        }
+      }
+    }
+    const resolved = {
+      ...request,
+      status: approved ? "approved" as const : "rejected" as const,
+      resolvedAt,
+    };
+    this.deliveryModeChangeRequests.set(request.id, resolved);
+    return copy(resolved);
   }
 
   async saveEventSchema(schema: EventSchema): Promise<EventSchema> {
@@ -346,6 +515,57 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     };
     this.liveSurfaces.set(key, copy(saved));
     return copy(saved);
+  }
+
+  async acceptHostedSurface(
+    surface: LiveSurface,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredLiveSurfaceWrite> {
+    const project = this.projects.get(surface.projectId);
+    if (!project) throw new Error("Project not found");
+    if (project.deliveryMode !== "hosted") throw new Error("PROJECT_PRIVATE_MODE");
+    const key = this.projectTypeKey(surface.projectId, surface.surfaceKey);
+    const existing = this.liveSurfaces.get(key);
+    const meter = this.meterSnapshot(project.userId, surface.updatedAt);
+    if (existing && sameSurface(existing, surface)) {
+      return {
+        ...meter,
+        surface: copy(existing),
+        created: false,
+        quotaExceeded: false,
+        surfaceLimitExceeded: false,
+      };
+    }
+    const surfacesForProject = [...this.liveSurfaces.values()]
+      .filter((candidate) => candidate.projectId === surface.projectId).length;
+    const surfaceLimit = meter.plan === "pro" ? 10 : 1;
+    if (!existing && enforcementMode === "enforce" && surfacesForProject >= surfaceLimit) {
+      return {
+        ...meter,
+        created: false,
+        quotaExceeded: false,
+        surfaceLimitExceeded: true,
+      };
+    }
+    if (enforcementMode === "enforce" && meter.acceptedSignals >= meter.courtesyLimit) {
+      return {
+        ...meter,
+        created: false,
+        quotaExceeded: true,
+        surfaceLimitExceeded: false,
+      };
+    }
+    const saved = await this.saveLiveSurface(surface);
+    const acceptedSignals = meter.acceptedSignals + 1;
+    this.signalUsage.set(this.usageKey(project.userId, surface.updatedAt), acceptedSignals);
+    return {
+      ...meter,
+      surface: saved,
+      created: true,
+      quotaExceeded: false,
+      surfaceLimitExceeded: false,
+      acceptedSignals,
+    };
   }
 
   async getLiveSurface(projectId: string, surfaceKey: string): Promise<LiveSurface | undefined> {
@@ -409,6 +629,43 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     if (token) this.ingestTokens.set(tokenId, { ...token, revokedAt });
   }
 
+  async savePrivateWakeToken(token: PrivateWakeToken): Promise<PrivateWakeToken> {
+    this.privateWakeTokens.set(token.id, copy(token));
+    return copy(token);
+  }
+
+  async listPrivateWakeTokens(projectId: string): Promise<PrivateWakeToken[]> {
+    return [...this.privateWakeTokens.values()]
+      .filter((token) => token.projectId === projectId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(copy);
+  }
+
+  async findPrivateWakeTokenByHash(
+    projectId: string,
+    tokenHash: string,
+  ): Promise<PrivateWakeToken | undefined> {
+    const now = Date.now();
+    const token = [...this.privateWakeTokens.values()].find(
+      (candidate) =>
+        candidate.projectId === projectId &&
+        candidate.tokenHash === tokenHash &&
+        !candidate.revokedAt &&
+        (!candidate.expiresAt || Date.parse(candidate.expiresAt) > now),
+    );
+    return token ? copy(token) : undefined;
+  }
+
+  async markPrivateWakeTokenUsed(tokenId: string, usedAt: string): Promise<void> {
+    const token = this.privateWakeTokens.get(tokenId);
+    if (token) this.privateWakeTokens.set(tokenId, { ...token, lastUsedAt: usedAt });
+  }
+
+  async revokePrivateWakeToken(tokenId: string, revokedAt: string): Promise<void> {
+    const token = this.privateWakeTokens.get(tokenId);
+    if (token) this.privateWakeTokens.set(tokenId, { ...token, revokedAt });
+  }
+
   async consumeRateLimit(key: string, limit: number, windowSeconds: number): Promise<boolean> {
     const now = Date.now();
     const current = this.rateLimits.get(key);
@@ -421,14 +678,69 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     return true;
   }
 
-  async createEventIfAbsent(event: BellwireEvent): Promise<CreateEventResult> {
-    const index = this.projectTypeKey(event.projectId, event.idempotencyKey);
+  async acceptHostedEvent(
+    event: BellwireEvent,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredEventWrite> {
+    const index = this.projectTypeKey(event.projectId, event.idempotencyKeyHash);
     const existingId = this.eventsByIdempotencyKey.get(index);
     const existing = existingId ? this.events.get(existingId) : undefined;
-    if (existing) return { event: copy(existing), created: false };
+    const project = this.projects.get(event.projectId);
+    if (!project) throw new Error("Project not found");
+    if (project.deliveryMode !== "hosted") throw new Error("PROJECT_PRIVATE_MODE");
+    const meter = this.meterSnapshot(project.userId, event.receivedAt);
+    if (existing) return { ...meter, event: copy(existing), created: false, quotaExceeded: false };
+    if (enforcementMode === "enforce" && meter.acceptedSignals >= meter.courtesyLimit) {
+      return { ...meter, created: false, quotaExceeded: true };
+    }
     this.events.set(event.id, copy(event));
     this.eventsByIdempotencyKey.set(index, event.id);
-    return { event: copy(event), created: true };
+    const acceptedSignals = meter.acceptedSignals + 1;
+    this.signalUsage.set(this.usageKey(project.userId, event.receivedAt), acceptedSignals);
+    return {
+      ...meter,
+      event: copy(event),
+      created: true,
+      quotaExceeded: false,
+      acceptedSignals,
+    };
+  }
+
+  async acceptPrivateWake(
+    wake: PrivateWake,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredPrivateWakeWrite> {
+    const index = this.projectTypeKey(wake.projectId, wake.idempotencyKeyHash);
+    const existingId = this.privateWakesByIdempotencyKey.get(index);
+    const existing = existingId ? this.privateWakes.get(existingId) : undefined;
+    const project = this.projects.get(wake.projectId);
+    if (!project) throw new Error("Project not found");
+    if (project.deliveryMode !== "private") throw new Error("PROJECT_HOSTED_MODE");
+    const meter = this.meterSnapshot(project.userId, wake.receivedAt);
+    if (existing) return { ...meter, wake: copy(existing), created: false, quotaExceeded: false };
+    if (enforcementMode === "enforce" && meter.acceptedSignals >= meter.courtesyLimit) {
+      return { ...meter, created: false, quotaExceeded: true };
+    }
+    this.privateWakes.set(wake.id, copy(wake));
+    this.privateWakesByIdempotencyKey.set(index, wake.id);
+    const acceptedSignals = meter.acceptedSignals + 1;
+    this.signalUsage.set(this.usageKey(project.userId, wake.receivedAt), acceptedSignals);
+    return {
+      ...meter,
+      wake: copy(wake),
+      created: true,
+      quotaExceeded: false,
+      acceptedSignals,
+    };
+  }
+
+  async getPrivateWake(wakeId: string): Promise<PrivateWake | undefined> {
+    return this.cloneFrom(this.privateWakes, wakeId);
+  }
+
+  async clearPrivateWakeReference(wakeId: string): Promise<void> {
+    const wake = this.privateWakes.get(wakeId);
+    if (wake) this.privateWakes.set(wakeId, { ...wake, reference: undefined });
   }
 
   async listEvents(projectId: string, options: EventListOptions): Promise<EventListPage> {
@@ -436,16 +748,27 @@ export class InMemoryBellwireRepository implements BellwireRepository {
       .filter((event) => event.projectId === projectId)
       .filter((event) => !options.eventType || event.eventType === options.eventType)
       .filter((event) => !options.unreadOnly || !event.readAt)
-      .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt));
+      .sort((left, right) => {
+        const dateOrder = right.receivedAt.localeCompare(left.receivedAt);
+        return dateOrder || right.id.localeCompare(left.id);
+      });
     if (options.cursor) {
-      events = events.filter((event) => event.receivedAt < options.cursor!);
+      const cursor = decodeEventCursor(options.cursor);
+      events = events.filter((event) =>
+        event.receivedAt < cursor.receivedAt
+          || (event.receivedAt === cursor.receivedAt && event.id < cursor.id));
     }
     const page = events.slice(0, options.limit + 1);
     const hasMore = page.length > options.limit;
     const visible = page.slice(0, options.limit).map(copy);
     return {
       events: visible,
-      ...(hasMore && visible.at(-1) ? { nextCursor: visible.at(-1)?.receivedAt } : {}),
+      ...(hasMore && visible.at(-1) ? {
+        nextCursor: encodeEventCursor({
+          receivedAt: visible.at(-1)!.receivedAt,
+          id: visible.at(-1)!.id,
+        }),
+      } : {}),
     };
   }
 
@@ -567,12 +890,28 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   }
 
   async getDeliveryHealth(projectId: string, since: string): Promise<DeliveryHealth> {
-    const eventIds = new Set(
-      [...this.events.values()].filter((event) => event.projectId === projectId).map((event) => event.id),
-    );
-    const deliveries = [...this.deliveries.values()].filter(
-      (item) => eventIds.has(item.eventId) && item.updatedAt >= since,
-    );
+    const project = this.projects.get(projectId);
+    const deliveries = project?.deliveryMode === "private"
+      ? (() => {
+          const wakeIds = new Set(
+            [...this.privateWakes.values()]
+              .filter((wake) => wake.projectId === projectId)
+              .map((wake) => wake.id),
+          );
+          return [...this.privateWakeDeliveries.values()].filter(
+            (item) => wakeIds.has(item.wakeId) && item.updatedAt >= since,
+          );
+        })()
+      : (() => {
+          const eventIds = new Set(
+            [...this.events.values()]
+              .filter((event) => event.projectId === projectId)
+              .map((event) => event.id),
+          );
+          return [...this.deliveries.values()].filter(
+            (item) => eventIds.has(item.eventId) && item.updatedAt >= since,
+          );
+        })();
     const queued = deliveries.filter((item) => item.status === "queued").length;
     const accepted = deliveries.filter((item) => item.status === "accepted_by_apns").length;
     const failed = deliveries.filter((item) => item.status === "failed").length;
@@ -584,6 +923,143 @@ export class InMemoryBellwireRepository implements BellwireRepository {
     };
   }
 
+  async createPrivateWakeDeliveryIfAbsent(
+    delivery: PrivateWakeDelivery,
+  ): Promise<{ delivery: PrivateWakeDelivery; created: boolean }> {
+    const existing = [...this.privateWakeDeliveries.values()].find(
+      (candidate) =>
+        candidate.wakeId === delivery.wakeId && candidate.deviceId === delivery.deviceId,
+    );
+    if (existing) return { delivery: copy(existing), created: false };
+    this.privateWakeDeliveries.set(delivery.id, copy(delivery));
+    return { delivery: copy(delivery), created: true };
+  }
+
+  async listPrivateWakeDeliveries(wakeId: string): Promise<PrivateWakeDelivery[]> {
+    return [...this.privateWakeDeliveries.values()]
+      .filter((delivery) => delivery.wakeId === wakeId)
+      .map(copy);
+  }
+
+  async claimPrivateWakeDelivery(
+    deliveryId: string,
+    claimedAt: string,
+    leaseSeconds: number,
+    maxAttempts: number,
+  ): Promise<PrivateWakeDelivery | undefined> {
+    const delivery = this.privateWakeDeliveries.get(deliveryId);
+    if (!delivery || leaseSeconds < 1 || maxAttempts < 1) return undefined;
+    const claimTime = Date.parse(claimedAt);
+    const leaseExpired = Date.parse(delivery.updatedAt) <= claimTime - leaseSeconds * 1_000;
+    if (delivery.status === "queued" && delivery.attemptCount >= maxAttempts && leaseExpired) {
+      this.privateWakeDeliveries.set(delivery.id, {
+        ...delivery,
+        status: "failed",
+        errorCode: "permanent:LeaseExpired",
+        errorMessage: "Private wake worker lease expired after the maximum number of attempts",
+        updatedAt: claimedAt,
+      });
+      return undefined;
+    }
+    const claimable = delivery.attemptCount < maxAttempts && (
+      (delivery.status === "queued" && (delivery.attemptCount === 0 || leaseExpired)) ||
+      (delivery.status === "failed" && delivery.errorCode?.startsWith("retryable:") === true)
+    );
+    if (!claimable) return undefined;
+    const claimed: PrivateWakeDelivery = {
+      ...delivery,
+      status: "queued",
+      attemptCount: delivery.attemptCount + 1,
+      errorCode: undefined,
+      errorMessage: undefined,
+      updatedAt: claimedAt,
+    };
+    this.privateWakeDeliveries.set(claimed.id, copy(claimed));
+    return copy(claimed);
+  }
+
+  async completeClaimedPrivateWakeDelivery(
+    delivery: PrivateWakeDelivery,
+  ): Promise<PrivateWakeDelivery | undefined> {
+    const current = this.privateWakeDeliveries.get(delivery.id);
+    if (
+      !current ||
+      current.status !== "queued" ||
+      current.attemptCount !== delivery.attemptCount
+    ) {
+      return undefined;
+    }
+    this.privateWakeDeliveries.set(delivery.id, copy(delivery));
+    return copy(delivery);
+  }
+
+  async updatePrivateWakeDelivery(
+    delivery: PrivateWakeDelivery,
+  ): Promise<PrivateWakeDelivery> {
+    this.privateWakeDeliveries.set(delivery.id, copy(delivery));
+    return copy(delivery);
+  }
+
+  async getAccountEntitlement(userId: string, now: string): Promise<AccountEntitlement> {
+    const meter = this.meterSnapshot(userId, now);
+    const transaction = this.entitlements.get(userId);
+    const projectCount = [...this.projects.values()]
+      .filter((project) => project.userId === userId && project.status === "active").length;
+    const deviceCount = [...this.devices.values()]
+      .filter((device) => device.userId === userId && device.pushEnabled).length;
+    return {
+      plan: meter.plan,
+      status: transaction?.status ?? "active",
+      ...(transaction?.productId ? { productId: transaction.productId } : {}),
+      ...(transaction?.expiresAt ? { expiresAt: transaction.expiresAt } : {}),
+      limits: {
+        activeProjects: meter.plan === "pro" ? 20 : 3,
+        activeDevices: meter.plan === "pro" ? 3 : 1,
+        monthlySignals: meter.signalLimit,
+        courtesySignals: meter.courtesyLimit,
+        ingestPerMinute: meter.plan === "pro" ? 300 : 60,
+        hostedRetentionDays: meter.plan === "pro" ? 90 : 7,
+        surfacesPerProject: meter.plan === "pro" ? 10 : 1,
+      },
+      usage: {
+        periodStart: this.periodStart(now),
+        periodEnd: meter.resetAt,
+        acceptedSignals: meter.acceptedSignals,
+        remainingSignals: Math.max(0, meter.signalLimit - meter.acceptedSignals),
+        courtesyRemainingSignals: Math.max(0, meter.courtesyLimit - meter.acceptedSignals),
+      },
+      activeProjects: projectCount,
+      activeDevices: deviceCount,
+    };
+  }
+
+  async saveAppleTransaction(transaction: AppleTransactionRecord): Promise<void> {
+    this.appleTransactions.set(transaction.transactionId, copy(transaction));
+    const current = this.entitlements.get(transaction.userId);
+    if (!current || current.signedDate <= transaction.signedDate) {
+      this.entitlements.set(transaction.userId, copy(transaction));
+    }
+  }
+
+  async saveAppleNotificationReceipt(
+    notificationUUID: string,
+    notificationType: string,
+    subtype: string | undefined,
+    signedDate: string,
+  ): Promise<boolean> {
+    void notificationType;
+    void subtype;
+    void signedDate;
+    if (this.appleNotificationReceipts.has(notificationUUID)) return false;
+    this.appleNotificationReceipts.add(notificationUUID);
+    return true;
+  }
+
+  async runMaintenance(now: string): Promise<unknown> {
+    void now;
+    return {};
+  }
+
   private cloneFrom<T>(map: Map<string, T>, key: string): T | undefined {
     const value = map.get(key);
     return value ? copy(value) : undefined;
@@ -592,6 +1068,35 @@ export class InMemoryBellwireRepository implements BellwireRepository {
   private projectTypeKey(projectId: string, value: string): string {
     return `${projectId}:${value}`;
   }
+
+  private meterSnapshot(userId: string, now: string) {
+    const transaction = this.entitlements.get(userId);
+    const pro = transaction?.status === "active" || transaction?.status === "grace"
+      ? !transaction.expiresAt || transaction.expiresAt > now
+      : false;
+    const plan = pro ? "pro" as const : "free" as const;
+    return {
+      plan,
+      acceptedSignals: this.signalUsage.get(this.usageKey(userId, now)) ?? 0,
+      signalLimit: plan === "pro" ? 50_000 : 5_000,
+      courtesyLimit: plan === "pro" ? 55_000 : 5_500,
+      resetAt: this.periodEnd(now),
+    };
+  }
+
+  private usageKey(userId: string, now: string): string {
+    return `${userId}:${this.periodStart(now)}`;
+  }
+
+  private periodStart(now: string): string {
+    const date = new Date(now);
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString();
+  }
+
+  private periodEnd(now: string): string {
+    const date = new Date(now);
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString();
+  }
 }
 
 function compareDisplayOrder(
@@ -599,4 +1104,26 @@ function compareDisplayOrder(
   right: { displayOrder: number; id: string },
 ): number {
   return left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
+}
+
+function sameSurface(left: LiveSurface, right: LiveSurface): boolean {
+  return left.type === right.type
+    && left.title === right.title
+    && left.subtitle === right.subtitle
+    && stableJson(left.content) === stableJson(right.content)
+    && stableJson(left.action) === stableJson(right.action);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, sortJson(nested)]),
+  );
 }

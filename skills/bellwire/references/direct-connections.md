@@ -1,28 +1,21 @@
-# Bellwire Direct
+# Bellwire Private and Direct v2
 
-Use Bellwire Direct when card data should travel from the user's service to the
-iPhone without Bellwire storing or reading the payload.
+Private is the default project mode. Bellwire stores only control-plane metadata
+and an opaque wake reference; notification, Inbox, and Surface content travels
+directly from the user's HTTPS service to the iPhone.
 
-## Protocol
+## Establish a device connection
 
-1. Bind with the six-digit code. A privacy-capable App returns `deviceKey` with:
-   `id`, `agreementPublicKey`, `signingPublicKey`, `installationId`, and `algorithm`.
-2. Register `deviceKey.id` and `deviceKey.signingPublicKey` in the user's service.
-   Store one record per device and support explicit revocation.
-3. Implement an HTTPS `GET` endpoint that returns the standard
-   `{ "surfaces": [...] }` response. Keep the response below 1 MB.
-   To support private Lock Screen details, also implement `notificationPath`.
-   Bellwire appends an opaque `ref` query parameter and expects a response
-   below 64 KB containing `title`, `body`, and optional `subtitle` and
-   `logoUrl`.
-4. Verify every request with
-   [verify-direct-request.mjs](../scripts/verify-direct-request.mjs). Persist each
-   nonce atomically with a unique constraint and reject timestamps outside five
-   minutes. KV read-then-write is not sufficient for replay protection.
-5. Create a version 1 manifest using
-   `examples/templates/direct-connection.manifest.json`. Do not put passwords,
-   bearer tokens, cookies, or provider secrets in the manifest.
-6. Encrypt and publish the manifest:
+1. Bind with the six-digit code. Bellwire returns `deviceKey` containing `id`,
+   `agreementPublicKey`, `signingPublicKey`, `installationId`, and `algorithm`.
+2. Store `deviceKey.id`, `deviceKey.signingPublicKey`, account/project ownership,
+   and revocation state in the user's database. One row per device is required.
+3. Implement all three signed HTTPS endpoints described below.
+4. Create a manifest v2 from
+   `examples/templates/direct-connection.manifest.json`. It contains only public
+   display identity and endpoint paths—never a bearer token, cookie, password,
+   provider secret, or embedded URL credential.
+5. Encrypt and publish it:
 
    ```bash
    node <skill-dir>/scripts/bellwire.mjs publish-direct-connection \
@@ -31,10 +24,43 @@ iPhone without Bellwire storing or reading the payload.
      --file direct-connection.json
    ```
 
-The CLI derives an AES-256-GCM key using ephemeral P-256 ECDH and HKDF-SHA256.
-Bellwire stores only the ephemeral public key and sealed box for up to 24 hours.
-The iPhone decrypts the manifest, stores it in the device-only Keychain, deletes
-the envelope, and then contacts the user's HTTPS endpoint directly.
+The CLI uses ephemeral P-256 ECDH, HKDF-SHA256 with
+`bellwire-direct-connection-v2`, and AES-256-GCM. The envelope declares the
+plaintext Bellwire project ID and manifest version. The phone rejects a
+decrypted manifest whose project ID differs, persists it in device-only
+Keychain, and acknowledges the envelope. Ack atomically records readiness and
+deletes the ciphertext.
+
+## Manifest v2
+
+```json
+{
+  "version": 2,
+  "connectionId": "opaque-connection-id",
+  "baseUrl": "https://service.example.com",
+  "project": {
+    "id": "bellwire-project-uuid",
+    "name": "Example",
+    "icon": "bolt.fill",
+    "logoUrl": "https://service.example.com/logo.png",
+    "displayOrder": 10,
+    "category": "automation"
+  },
+  "endpoints": {
+    "notification": "/bellwire/v2/notification",
+    "inbox": "/bellwire/v2/inbox",
+    "surfaces": "/bellwire/v2/surfaces"
+  },
+  "capabilities": ["notification_detail", "inbox", "surfaces"]
+}
+```
+
+`title` is limited to 240 characters, `body` to 1,000, and `subtitle` to 240.
+`logoUrl` must be public HTTPS. `deepLink` must be HTTPS or use the Bellwire
+app's configured URL scheme; embedded URL credentials are rejected.
+
+`baseUrl` must be public HTTPS without credentials. Endpoint values are absolute
+paths beginning with one `/`, and all cursor/reference values must be opaque.
 
 ## Signed request
 
@@ -45,7 +71,7 @@ X-Bellwire-Connection: <connectionId>
 X-Bellwire-Key-Id: <deviceKey.id>
 X-Bellwire-Timestamp: <unix seconds>
 X-Bellwire-Nonce: <random value>
-X-Bellwire-Signature: <base64 P-256 raw signature>
+X-Bellwire-Signature: <base64 P-256 signature>
 ```
 
 The signed UTF-8 value is:
@@ -58,27 +84,87 @@ NONCE
 LOWERCASE_SHA256_BODY_HEX
 ```
 
-Use HTTPS without embedded credentials. Return `401` for invalid keys,
-signatures, timestamps, or reused nonces. Never fall back to an unsigned
-response.
+Use [verify-direct-request.mjs](../scripts/verify-direct-request.mjs). Resolve
+connection and key ownership before verification, reject timestamps outside
+five minutes, and atomically insert `keyId + nonce` under a unique database
+constraint. A KV read-then-write check is unsafe. Return the same `401` for
+unknown connections, revoked keys, stale timestamps, bad signatures, and replay.
 
-## Notification privacy modes
+## Private outbox and wake
 
-Read `GET /v1/events/:projectId/notification-preference` with the project Ingest
-Token before sending private events. If the mode is `generic` or
-`local_enrichment`, send only a generic Event with a stable, opaque
-`directNotificationRef` field and store the matching detail on the user's
-service. Mark that field sensitive in the Event Schema.
+After the real business transaction succeeds:
 
-- `generic`: Bellwire and APNs receive only a generic alert. The extension does
-  not fetch notification detail.
-- `local_enrichment` (default): Bellwire and APNs receive the same generic
-  alert and opaque reference. Before presentation, the iPhone signs a request
-  to `notificationPath`, fetches the detail directly, and rewrites the Lock
-  Screen notification. Failure falls back to the generic alert.
-- `hosted_detailed`: send the existing detailed Event. Bellwire renders and
-  relays the title and body through APNs.
+1. Generate at least 16 random bytes and encode them as a 22–200 character
+   base64url reference.
+2. In the same durable transaction, save notification detail and the reference
+   with an expiry no later than 24 hours.
+3. Send only `{ "reference": "...", "priority": "normal" }` to the Bellwire
+   Private wake endpoint using `BELLWIRE_WAKE_TOKEN`.
+4. Reuse one stable `Idempotency-Key` for all retries of that wake.
 
-If the preference request fails, default to `local_enrichment` and do not send
-private values to Bellwire. Never include revenue, customer, order, credential,
-or free-form content in a generic or local-enrichment Event.
+The reference must not contain an order number, email, task name, customer ID,
+project name, or timestamp. The wake call should have a short timeout and be
+best-effort after commit. Never fall back to a Hosted Event if it fails.
+
+## Direct endpoint responses
+
+Notification:
+
+```http
+GET /bellwire/v2/notification?ref=<opaque-reference>
+```
+
+Return at most 64 KB:
+
+```json
+{
+  "reference": "opaque-reference",
+  "eventType": "payment.success",
+  "title": "Payment received",
+  "body": "Creator plan renewed",
+  "subtitle": "Just now",
+  "occurredAt": "2026-07-25T10:00:00Z",
+  "data": { "amount": "$29.99" },
+  "deepLink": "https://example.com/orders/detail",
+  "logoUrl": "https://example.com/logo.png"
+}
+```
+
+Inbox:
+
+```http
+GET /bellwire/v2/inbox?cursor=<opaque-cursor>&limit=50
+```
+
+Return at most 1 MB with no more than 50 events:
+
+```json
+{ "events": [], "nextCursor": null }
+```
+
+Surfaces:
+
+```http
+GET /bellwire/v2/surfaces
+```
+
+Return the standard `{ "surfaces": [...] }` response, at most 1 MB. Content is
+never uploaded to Bellwire Cloud.
+
+## Conformance
+
+Register a dedicated test device key, store its PKCS#8 P-256 private key only in
+the local secret environment, seed one valid outbox reference, then run:
+
+```bash
+BELLWIRE_SIGNING_PRIVATE_KEY='<base64-pkcs8>' \
+node <skill-dir>/scripts/conformance-direct.mjs \
+  --manifest direct-connection.json \
+  --device-key-id "$BELLWIRE_DEVICE_KEY_ID" \
+  --reference "$BELLWIRE_TEST_REFERENCE"
+```
+
+Conformance validates signed access, response size, shape, reference equality,
+Inbox page size, all declared capabilities, replayed nonce, stale timestamp,
+unknown key, and tampered query behavior. Every authentication failure must
+return the same `401` response.

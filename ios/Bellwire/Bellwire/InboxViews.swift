@@ -179,6 +179,13 @@ private struct ProjectListRow: View {
                     if project.isPaused {
                         StatusBadgeView(text: "Paused", color: BellwireTheme.mutedInk, showsDot: false)
                     }
+                    StatusBadgeView(
+                        text: project.deliveryMode == .private ? "Private" : "Hosted",
+                        color: project.deliveryMode == .private
+                            ? BellwireTheme.success
+                            : BellwireTheme.warning,
+                        showsDot: false
+                    )
                 }
                 Text(project.category.capitalized + " · " + latestDescription)
                     .font(.caption)

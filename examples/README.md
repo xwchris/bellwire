@@ -1,5 +1,25 @@
 # Bellwire integration examples
 
+New projects use Private delivery. Private notification, Inbox, and Surface
+content stays in the source service and on the iPhone; Bellwire receives only a
+random opaque wake reference. Hosted examples are available when the user has
+approved Hosted mode in the App.
+
+## Private reference implementations
+
+- [Node.js Direct v2](node/private-direct.mjs): signed endpoint handler,
+  database callback boundaries, outbox record, and bounded wake sender.
+- [Cloudflare Worker Direct v2](cloudflare-worker/bellwire-direct.ts): D1-backed
+  atomic nonce consumption plus notification, Inbox, and Surface routes.
+- [D1 outbox schema](cloudflare-worker/bellwire-private-outbox.sql): opaque
+  24-hour detail storage owned by the user's service.
+
+Create a wake-only token with `create-wake-token`, keep it in
+`BELLWIRE_WAKE_TOKEN`, publish a manifest v2, and run
+`skills/bellwire/scripts/conformance-direct.mjs` before production verification.
+
+## Hosted examples
+
 These examples send typed Events after the source operation has succeeded. They
 use three runtime values that must stay outside Git:
 
@@ -7,7 +27,7 @@ use three runtime values that must stay outside Git:
 - `BELLWIRE_PROJECT_ID`: the destination project ID.
 - `BELLWIRE_API_URL`: optional; defaults to `https://api.bellwire.app`.
 
-## Configure an Event type
+## Configure a Hosted Event type
 
 After binding the CLI with an Agent token, create a schema from one of the
 templates:

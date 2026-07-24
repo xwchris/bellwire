@@ -78,7 +78,7 @@ describe("public integration examples", () => {
       "sha256",
       sharedSecret,
       Buffer.from(deviceKeyId),
-      Buffer.from("bellwire-direct-connection-v1"),
+      Buffer.from("bellwire-direct-connection-v2"),
       32,
     ));
     const combined = Buffer.from(envelope.sealedBox, "base64");
@@ -89,8 +89,12 @@ describe("public integration examples", () => {
       decipher.final(),
     ]);
     expect(JSON.parse(plaintext.toString("utf8"))).toMatchObject({
-      version: 1,
+      version: 2,
       connectionId: "videosays-device-connection",
+    });
+    expect(envelope).toMatchObject({
+      projectId: "11111111-1111-4111-8111-111111111112",
+      manifestVersion: 2,
     });
     expect(result.stdout).not.toContain("videosays.com");
   });

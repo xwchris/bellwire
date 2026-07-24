@@ -49,6 +49,16 @@ async function run(selectedCommand, args) {
           ...(args.category ? { category: args.category } : {}),
         },
       });
+    case "request-mode-change": {
+      const toMode = required(args, "to");
+      if (!["private", "hosted"].includes(toMode)) {
+        throw new Error("--to must be private or hosted");
+      }
+      return apiRequest(
+        `/v1/projects/${encodeURIComponent(required(args, "project"))}/delivery-mode-requests`,
+        { method: "POST", body: { toMode } },
+      );
+    }
     case "update-project": {
       const projectId = required(args, "project");
       if (args["logo-url"] && args["clear-logo"]) {
@@ -96,6 +106,42 @@ async function run(selectedCommand, args) {
         method: "POST",
         body: { name: args.name ?? "production" },
       });
+    case "revoke-token":
+      return apiRequest(
+        `/v1/projects/${encodeURIComponent(required(args, "project"))}/ingest-tokens/${encodeURIComponent(required(args, "token"))}`,
+        { method: "DELETE" },
+      );
+    case "create-wake-token":
+      return apiRequest(`/v1/projects/${encodeURIComponent(required(args, "project"))}/wake-tokens`, {
+        method: "POST",
+        body: {
+          name: args.name ?? "production",
+          ...(args["expires-at"] ? { expiresAt: args["expires-at"] } : {}),
+        },
+      });
+    case "revoke-wake-token":
+      return apiRequest(
+        `/v1/projects/${encodeURIComponent(required(args, "project"))}/wake-tokens/${encodeURIComponent(required(args, "token"))}`,
+        { method: "DELETE" },
+      );
+    case "generate-reference":
+      return { reference: randomBytes(16).toString("base64url") };
+    case "send-wake": {
+      const projectId = required(args, "project");
+      const reference = required(args, "reference");
+      validateOpaqueReference(reference);
+      const priority = args.priority ?? "normal";
+      if (!["normal", "high"].includes(priority)) {
+        throw new Error("--priority must be normal or high");
+      }
+      return apiRequest(`/v1/projects/${encodeURIComponent(projectId)}/private-wakes`, {
+        method: "POST",
+        body: { reference, priority },
+        token: process.env.BELLWIRE_WAKE_TOKEN?.trim(),
+        tokenName: "BELLWIRE_WAKE_TOKEN",
+        headers: { "idempotency-key": required(args, "idempotency-key") },
+      });
+    }
     case "validate-surface": {
       const surface = await readJsonFile(required(args, "file"));
       validateSurface(surface);
@@ -154,11 +200,21 @@ async function run(selectedCommand, args) {
         required(args, "agreement-public-key"),
       );
       if (selectedCommand === "encrypt-direct-connection") {
-        return { deviceKeyId, ...encrypted };
+        return {
+          deviceKeyId,
+          projectId: manifest.project.id,
+          manifestVersion: 2,
+          ...encrypted,
+        };
       }
       return apiRequest("/v1/direct-connections", {
         method: "POST",
-        body: { deviceKeyId, ...encrypted },
+        body: {
+          deviceKeyId,
+          projectId: manifest.project.id,
+          manifestVersion: 2,
+          ...encrypted,
+        },
       });
     }
     default:
@@ -168,10 +224,12 @@ async function run(selectedCommand, args) {
 
 async function apiRequest(path, init = {}) {
   const baseUrl = (process.env.BELLWIRE_API_URL || DEFAULT_API_URL).replace(/\/$/u, "");
-  const headers = { accept: "application/json" };
+  const headers = { accept: "application/json", ...(init.headers ?? {}) };
   if (init.authenticated !== false) {
-    const token = process.env.BELLWIRE_AGENT_TOKEN?.trim();
-    if (!token) throw new Error("BELLWIRE_AGENT_TOKEN is required for this command");
+    const token = init.token ?? process.env.BELLWIRE_AGENT_TOKEN?.trim();
+    if (!token) {
+      throw new Error(`${init.tokenName ?? "BELLWIRE_AGENT_TOKEN"} is required for this command`);
+    }
     headers.authorization = `Bearer ${token}`;
   }
   if (init.body !== undefined) headers["content-type"] = "application/json";
@@ -186,6 +244,10 @@ async function apiRequest(path, init = {}) {
   if (!response.ok) {
     const code = data?.error?.code ? `${data.error.code}: ` : "";
     const message = data?.error?.message ?? `HTTP ${response.status}`;
+    if (data?.error?.code === "MONTHLY_SIGNAL_LIMIT_REACHED") {
+      const reset = data.error.resetAt ? ` Reset at ${data.error.resetAt}.` : "";
+      throw new Error(`${code}${message}.${reset} Do not retry until reset or upgrade the account.`);
+    }
     throw new Error(`${code}${message}`);
   }
   return data;
@@ -287,8 +349,8 @@ function validateTestEvent(value) {
 }
 
 function validateDirectConnectionManifest(value) {
-  if (!isRecord(value) || value.version !== 1) {
-    throw new Error("Direct connection manifest version must be 1");
+  if (!isRecord(value) || value.version !== 2) {
+    throw new Error("Direct connection manifest version must be 2");
   }
   bounded(value.connectionId, "connectionId", 120, true);
   bounded(value.baseUrl, "baseUrl", 2048, true);
@@ -298,23 +360,28 @@ function validateDirectConnectionManifest(value) {
   } catch {
     throw new Error("baseUrl must be a public HTTPS URL without embedded credentials");
   }
-  if (!nonEmpty(value.surfacesPath) || !value.surfacesPath.startsWith("/") || value.surfacesPath.startsWith("//")) {
-    throw new Error("surfacesPath must be an absolute URL path");
+  if (!isRecord(value.endpoints)) throw new Error("endpoints is required");
+  for (const name of ["notification", "inbox", "surfaces"]) {
+    validateEndpointPath(value.endpoints[name], `endpoints.${name}`);
   }
   if (
-    value.notificationPath !== undefined
-    && (
-      !nonEmpty(value.notificationPath)
-      || !value.notificationPath.startsWith("/")
-      || value.notificationPath.startsWith("//")
-    )
+    !Array.isArray(value.capabilities)
+    || value.capabilities.length === 0
+    || value.capabilities.some((item) =>
+      !["notification_detail", "inbox", "surfaces"].includes(item))
   ) {
-    throw new Error("notificationPath must be an absolute URL path");
+    throw new Error("capabilities must contain only notification_detail, inbox, and surfaces");
+  }
+  for (const capability of ["notification_detail", "inbox", "surfaces"]) {
+    if (!value.capabilities.includes(capability)) {
+      throw new Error(`capabilities must include ${capability}`);
+    }
   }
   if (!isRecord(value.project)) throw new Error("project is required");
   bounded(value.project.id, "project.id", 120, true);
   bounded(value.project.name, "project.name", 120, true);
   bounded(value.project.icon, "project.icon", 120, true);
+  bounded(value.project.category, "project.category", 80, true);
   if (value.project.logoUrl !== undefined) validateLogoUrl(value.project.logoUrl);
   if (!Number.isInteger(value.project.displayOrder) || value.project.displayOrder < 0) {
     throw new Error("project.displayOrder must be a non-negative integer");
@@ -343,7 +410,7 @@ function encryptDirectConnection(manifest, deviceKeyId, agreementPublicKey) {
     "sha256",
     sharedSecret,
     Buffer.from(deviceKeyId, "utf8"),
-    Buffer.from("bellwire-direct-connection-v1", "utf8"),
+    Buffer.from("bellwire-direct-connection-v2", "utf8"),
     32,
   ));
   const nonce = randomBytes(12);
@@ -356,6 +423,24 @@ function encryptDirectConnection(manifest, deviceKeyId, agreementPublicKey) {
     ephemeralPublicKey: ephemeralPublicKey.toString("base64"),
     sealedBox: sealedBox.toString("base64"),
   };
+}
+
+function validateEndpointPath(value, name) {
+  if (!nonEmpty(value) || !value.startsWith("/") || value.startsWith("//")) {
+    throw new Error(`${name} must be an absolute URL path`);
+  }
+  try {
+    const parsed = new URL(value, "https://bellwire.invalid");
+    if (parsed.origin !== "https://bellwire.invalid") throw new Error();
+  } catch {
+    throw new Error(`${name} must be a valid absolute URL path`);
+  }
+}
+
+function validateOpaqueReference(value) {
+  if (!/^[A-Za-z0-9_-]{22,200}$/u.test(value)) {
+    throw new Error("--reference must be a 22-200 character URL-safe opaque value");
+  }
 }
 
 function validateSurface(value) {
@@ -497,5 +582,41 @@ function printResult(value, json) {
 }
 
 function printHelp() {
-  process.stdout.write(`Bellwire CLI\n\nUsage:\n  bellwire.mjs <command> [options] [--json]\n\nCommands:\n  bind --code <6 digits> [--name <agent>]\n  list-projects\n  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]\n  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]\n  set-project-order --project <id> --order <integer>\n  delete-project --project <id>\n  validate-spec --file <event-spec.json>\n  create-schema --project <id> --file <event-spec.json>\n  create-token --project <id> [--name <name>]\n  validate-surface --file <surface.json>\n  upsert-surface --project <id> --key <stable-key> --file <surface.json>\n  list-surfaces [--project <id>]\n  set-surface-order --project <id> --key <stable-key> --order <integer>\n  delete-surface --project <id> --key <stable-key>\n  encrypt-direct-connection --device-key-id <uuid> --agreement-public-key <base64> --file <manifest.json>\n  publish-direct-connection --device-key-id <uuid> --agreement-public-key <base64> --file <manifest.json>\n  send-test --project <id> --file <test-event.json>\n  event --event <id>\n  health --project <id>\n\nEnvironment:\n  BELLWIRE_AGENT_TOKEN  Management token (except bind)\n  BELLWIRE_API_URL      Override the hosted API URL\n`);
+  process.stdout.write(`Bellwire CLI
+
+Usage:
+  bellwire.mjs <command> [options] [--json]
+
+Commands:
+  bind --code <6 digits> [--name <agent>]
+  list-projects
+  create-project --name <name> [--logo-url <https-url>] [--icon <sf-symbol>] [--category <name>]
+  request-mode-change --project <id> --to private|hosted
+  update-project --project <id> [--logo-url <https-url> | --clear-logo] [--name <name>] [--status active|paused]
+  set-project-order --project <id> --order <integer>
+  delete-project --project <id>
+  validate-spec --file <event-spec.json>
+  create-schema --project <id> --file <event-spec.json>
+  create-token --project <id> [--name <name>]
+  revoke-token --project <id> --token <token-id>
+  create-wake-token --project <id> [--name <name>] [--expires-at <iso-date>]
+  revoke-wake-token --project <id> --token <token-id>
+  generate-reference
+  send-wake --project <id> --reference <opaque-ref> --idempotency-key <key> [--priority normal|high]
+  validate-surface --file <surface.json>
+  upsert-surface --project <id> --key <stable-key> --file <surface.json>
+  list-surfaces [--project <id>]
+  set-surface-order --project <id> --key <stable-key> --order <integer>
+  delete-surface --project <id> --key <stable-key>
+  encrypt-direct-connection --device-key-id <uuid> --agreement-public-key <base64> --file <manifest.json>
+  publish-direct-connection --device-key-id <uuid> --agreement-public-key <base64> --file <manifest.json>
+  send-test --project <id> --file <test-event.json>
+  event --event <id>
+  health --project <id>
+
+Environment:
+  BELLWIRE_AGENT_TOKEN  Management token (except bind and send-wake)
+  BELLWIRE_WAKE_TOKEN   Private project wake-only runtime token
+  BELLWIRE_API_URL      Override the hosted API URL
+`);
 }

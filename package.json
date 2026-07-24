@@ -20,6 +20,7 @@
     "ios:build": "xcodebuild -project ios/Bellwire/Bellwire.xcodeproj -scheme Bellwire -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
     "hono": "^4.8.5",
     "jose": "^6.2.3"
   },

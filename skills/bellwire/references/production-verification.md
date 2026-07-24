@@ -7,8 +7,8 @@ Use this gate before describing Bellwire as actually connected to a product.
 1. **Source trigger:** identify the exact post-commit function, provider webhook,
    queue consumer, or scheduled job that calls Bellwire.
 2. **Runtime authentication:** confirm the deployed environment has the correct
-   project ID and project-scoped Ingest Token. Do not infer this from a local
-   shell or management Agent Token.
+   project ID and project-scoped wake token (Private) or Ingest Token (Hosted).
+   Do not infer this from a local shell or management Agent Token.
 3. **Durability:** use synchronous acceptance, a durable queue/outbox, or a
    replayable committed record with cursor-based reconciliation. `waitUntil`
    alone is not durable.
@@ -23,11 +23,16 @@ Use this gate before describing Bellwire as actually connected to a product.
 7. **Real source operation:** trigger or observe one genuine payment, job,
    deployment, or other business operation. Do not substitute `send-test` or a
    manual Surface upsert.
-8. **Bellwire readback:** verify the expected Event data, live Surface values,
-   idempotency behavior, and Delivery status.
+8. **Mode-specific readback:** for Private, verify the outbox reference, wake
+   acceptance, Direct v2 signed fetch, local Inbox/Surface result, and absence of
+   content in Bellwire. For Hosted, verify the expected Event data, live Surface
+   values, idempotency behavior, and Delivery status.
 9. **Device presentation:** report `accepted_by_apns` as provider acceptance.
    Claim that the phone displayed the notification only after user confirmation
    or direct device evidence.
+10. **Privacy invariant:** inspect logs and Bellwire-controlled storage for a
+    Private run. No title, body, Event data, Logo URL, project name, service
+    hostname, token, or raw idempotency key may be present.
 
 ## Completion language
 

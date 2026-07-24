@@ -387,6 +387,7 @@ struct SettingsRowView<Accessory: View>: View {
 
 struct DeviceRowView: View {
     let device: DeviceRecord
+    var onDelete: (() -> Void)?
 
     var body: some View {
         SettingsRowView(
@@ -394,11 +395,23 @@ struct DeviceRowView: View {
             title: device.name,
             hint: device.appVersion.map { "Bellwire \($0)" } ?? "Bellwire"
         ) {
-            StatusBadgeView(
-                text: device.pushEnabled ? "Push on" : "Push off",
-                color: device.pushEnabled ? BellwireTheme.success : BellwireTheme.mutedInk,
-                showsDot: false
-            )
+            HStack(spacing: BellwireSpacing.compact) {
+                StatusBadgeView(
+                    text: device.pushEnabled ? "Push on" : "Push off",
+                    color: device.pushEnabled ? BellwireTheme.success : BellwireTheme.mutedInk,
+                    showsDot: false
+                )
+                if let onDelete {
+                    Menu {
+                        Button("Remove device", role: .destructive, action: onDelete)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(BellwireTheme.mutedInk)
+                            .frame(width: 36, height: 36)
+                    }
+                }
+            }
         }
     }
 }

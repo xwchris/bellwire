@@ -1,11 +1,11 @@
 ---
 name: bellwire
-description: Add, update, test, diagnose, or maintain Bellwire live cards and phone notifications in Node.js, Cloudflare Worker, and shell projects. Use when a user asks an agent to keep iPhone metrics, progress, alerts, timers, business stats, payments, deployments, jobs, or other project state visible; also use for Bellwire binding, live Surfaces, Event Specs, inbound provider webhooks, token rotation, test events, delivery checks, or notification troubleshooting.
+description: Add, update, test, diagnose, or maintain Private-first Bellwire live cards, inbox events, and phone notifications in Node.js, Cloudflare Worker, and shell projects. Use for Bellwire binding, signed Direct v2 endpoints, opaque references and outboxes, wake tokens, Hosted Events and Surfaces, mode-change approval, provider webhooks, delivery checks, conformance, or notification troubleshooting.
 ---
 
 # Bellwire
 
-Connect repository state and events to the user's Bellwire cards, inbox, and iPhone while keeping authentication and notification details out of application code.
+Connect repository state and events to the user's Bellwire cards, inbox, and iPhone. New projects are Private by default: Bellwire relays only an opaque wake while the phone fetches content directly from the user's HTTPS service. Hosted storage is opt-in and requires approval in the App.
 
 ## Workflow
 
@@ -18,21 +18,22 @@ Connect repository state and events to the user's Bellwire cards, inbox, and iPh
    ```
 
    Store the returned Agent token in the user's approved secret store. Never commit it.
-4. Create or reuse the Bellwire project. Search existing configuration before creating another project.
-5. Choose the privacy mode before the rendering primitive:
-   - For private metrics or operational state that the user's service can expose over HTTPS, prefer Bellwire Direct. The App signs requests and pulls cards directly; Bellwire only relays an encrypted connection manifest. Read [direct-connections.md](references/direct-connections.md).
-   - Use hosted Surfaces only when the user accepts Bellwire storing the display-ready card payload.
-6. Choose the right primitive:
-   - Use a live Surface for current state that should update in place, such as stats, health, progress, an alert, or a timer. Read [surfaces.md](references/surfaces.md).
-   - Use an Event for durable history, completion, failure, recovery, or a decision boundary. Read [event-spec.md](references/event-spec.md).
-7. For a Surface, choose a stable key and upsert the already-computed display state. Do not create a new key for every update.
-8. For an Event, define minimal fields, create the schema and notification Surface, then create a project-scoped Ingest Token. Mark personal, credential, or customer identifiers `sensitive: true`.
-9. Modify the smallest reliable trigger point. Send or update only after the underlying business operation commits.
+4. Create or reuse the Bellwire project. Search existing configuration before creating another project. Never create a second project just to change delivery mode.
+5. Keep the project Private unless the user explicitly wants Bellwire Cloud to store Event, Inbox, and Surface content:
+   - Private: implement signed Direct v2 notification, inbox, and surfaces endpoints; persist device keys, one-time nonces, an opaque-reference outbox, and the 24-hour reference expiry in the user's real database. Read [direct-connections.md](references/direct-connections.md).
+   - Hosted: request the change with `request-mode-change`; stop until the signed-in user approves it in Bellwire. Then create Hosted schemas, Surfaces, and Ingest Tokens.
+6. For Private runtime delivery, create a wake-only token, store it in the source app's real secret manager, and call `private-wakes` best-effort after the source transaction and outbox record commit. Bellwire must never receive title, body, data, Logo URL, project name, or service hostname.
+7. Choose the display primitive:
+   - Surface: current state that updates in place. Read [surfaces.md](references/surfaces.md).
+   - Inbox event: durable history, completion, failure, recovery, or a decision boundary. In Private mode it stays in the user's service; in Hosted mode use [event-spec.md](references/event-spec.md).
+8. Use stable Surface keys and opaque, random references. Reuse a stable idempotency key for retries of the same wake or Hosted write.
+9. Modify the smallest reliable trigger point. Send only after the underlying business operation commits.
    - Prefer a direct post-commit Bellwire call when the application owns the business operation.
    - When a payment, commerce, deployment, or automation provider is the source of truth, read [webhooks.md](references/webhooks.md) and add a provider-specific webhook adapter.
-10. Run the repository's existing tests plus a focused test. Never weaken a business test to make Bellwire pass.
-11. Persist and deploy the source-side adapter through the repository's real source of truth. If commit or push is outside the user's request, report that explicitly instead of calling the integration durable.
-12. Verify the integration level using [production-verification.md](references/production-verification.md). Do not claim the phone presented a notification when the server only reports `accepted_by_apns`.
+10. Run unit tests for signature, timestamp, unknown key, tampered target, and atomic nonce replay; then run `conformance-direct.mjs`. If the database cannot atomically consume a nonce, stop and explain the safety blocker.
+11. Run the repository's existing tests plus a focused trigger test. Never weaken a business test to make Bellwire pass.
+12. Persist and deploy the source-side adapter and its secrets through the repository's real source of truth.
+13. Complete one real source operation and verify the outbox, wake acceptance, delivery, signed phone fetch, and displayed result using [production-verification.md](references/production-verification.md). A manual wake is not production verification.
 
 ## Integration status
 
@@ -50,6 +51,10 @@ Use [scripts/bellwire.mjs](scripts/bellwire.mjs) for API operations. It defaults
 
 ```bash
 node <skill-dir>/scripts/bellwire.mjs create-project --name "VideoSays" --logo-url "https://videosays.com/logo.png"
+node <skill-dir>/scripts/bellwire.mjs create-wake-token --project <id> --name production
+node <skill-dir>/scripts/bellwire.mjs generate-reference
+node <skill-dir>/scripts/bellwire.mjs send-wake --project <id> --reference <opaque-ref> --idempotency-key <stable-key>
+node <skill-dir>/scripts/bellwire.mjs request-mode-change --project <id> --to hosted
 node <skill-dir>/scripts/bellwire.mjs update-project --project <id> --logo-url "https://cdn.example.com/logo.png"
 node <skill-dir>/scripts/bellwire.mjs set-project-order --project <id> --order 10
 node <skill-dir>/scripts/bellwire.mjs delete-project --project <id>
@@ -65,6 +70,10 @@ node <skill-dir>/scripts/bellwire.mjs publish-direct-connection \
   --device-key-id <id> \
   --agreement-public-key <base64> \
   --file direct-connection.json
+node <skill-dir>/scripts/conformance-direct.mjs \
+  --manifest direct-connection.json \
+  --device-key-id <id> \
+  --reference <known-test-reference>
 ```
 
 `delete-project` is permanent and cascades through the project's schemas, tokens, events,
@@ -81,12 +90,20 @@ Use `--json` for machine-readable output. Read [api.md](references/api.md) when 
 - Treat event sending as a bounded side effect: set a timeout, avoid logging payloads, and decide explicitly whether notification failure may affect the business operation. Default to best-effort after the business operation succeeds.
 - Keep token values out of generated diffs, test snapshots, CI logs, and error telemetry.
 
-## Event rules
+## Private rules
+
+- Generate at least 128 random bits for each reference and encode it as 22–200 URL-safe characters. Never derive it from an order, email, task, customer, or timestamp.
+- Write notification detail to a database-backed outbox before sending the wake. Expire the reference after at most 24 hours.
+- A wake call is bounded and best-effort after commit. Do not roll back the real business operation because Bellwire is unavailable.
+- `MONTHLY_SIGNAL_LIMIT_REACHED` is terminal until the returned UTC reset time or an upgrade. Do not loop or retry it.
+- Private detail and Inbox responses come from the user's service and may be cached on the phone for 30 days; Bellwire Cloud never receives them.
+
+## Hosted Event rules
 
 - Use lowercase dotted names such as `payment.success`, `deployment.failed`, or `agent.waiting`.
 - Include only fields needed for the inbox, notification, deep link, or diagnosis.
 - Never reference a sensitive field in a notification template; the API rejects it.
-- Use order IDs, deployment IDs, task IDs, or run IDs for idempotency. Do not use random UUIDs for real events.
+- Use order IDs, deployment IDs, task IDs, or run IDs for Hosted idempotency. Do not expose those identifiers as Private references.
 - Avoid high-frequency progress events. Prefer completion, failure, recovery, and decision-required boundaries.
 - Ask for explicit user approval before requesting `priority: high`.
 

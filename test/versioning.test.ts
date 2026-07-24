@@ -15,6 +15,7 @@ const project: Project = {
   displayOrder: 0,
   category: "test",
   status: "active",
+  deliveryMode: "hosted",
   endpoint: "/v1/events/version-project",
   createdAt: timestamp,
   updatedAt: timestamp,

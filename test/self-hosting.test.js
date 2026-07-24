@@ -36,7 +36,11 @@ describe("self-host bootstrap and doctor", () => {
     const worker = readFileSync(join(root, "wrangler.self-host.toml"), "utf8");
     expect(ios).toContain("BELLWIRE_API_BASE_URL = https:/$()/bellwire.example.workers.dev");
     expect(ios).toContain("BELLWIRE_EXTENSION_BUNDLE_ID = com.example.bellwire.NotificationService");
+    expect(ios).toContain("BELLWIRE_WIDGET_BUNDLE_ID = com.example.bellwire.Widgets");
+    expect(ios).toContain("BELLWIRE_APP_GROUP = group.com.example.bellwire.shared");
     expect(worker).toContain('APP_URL_SCHEME = "bellwire-self-host"');
+    expect(worker).toContain('ENTITLEMENT_ENFORCEMENT_MODE = "disabled"');
+    expect(worker).toContain('crons = ["17 * * * *"]');
     expect(`${ios}\n${worker}`).not.toMatch(/sb_secret_|PRIVATE KEY|YOUR_/u);
 
     const doctor = run(doctorScript, ["--root", root, "--json"]);

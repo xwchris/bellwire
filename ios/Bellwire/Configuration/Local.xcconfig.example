@@ -4,6 +4,8 @@
 BELLWIRE_DEVELOPMENT_TEAM = YOUR_APPLE_TEAM_ID
 BELLWIRE_APP_BUNDLE_ID = com.example.bellwire
 BELLWIRE_EXTENSION_BUNDLE_ID = $(BELLWIRE_APP_BUNDLE_ID).NotificationService
+BELLWIRE_WIDGET_BUNDLE_ID = $(BELLWIRE_APP_BUNDLE_ID).Widgets
+BELLWIRE_APP_GROUP = group.$(BELLWIRE_APP_BUNDLE_ID).shared
 BELLWIRE_URL_SCHEME = bellwire-self-host
 
 // Keep the https:/$()/ form so xcconfig does not treat // as a comment.

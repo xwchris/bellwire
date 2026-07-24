@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-export type TokenKind = "agent" | "ingest";
+export type TokenKind = "agent" | "ingest" | "wake";
 
 export function createOpaqueToken(kind: TokenKind): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -7,7 +7,12 @@ export function createOpaqueToken(kind: TokenKind): string {
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replace(/=+$/u, "");
-  return `${kind === "agent" ? "bw_agent" : "bw_live"}_${encoded}`;
+  const prefix = kind === "agent"
+    ? "bw_agent"
+    : kind === "wake"
+      ? "bw_wake"
+      : "bw_live";
+  return `${prefix}_${encoded}`;
 }
 
 export async function hashSecret(secret: string): Promise<string> {

@@ -16,6 +16,7 @@ import {
   type ApnsSenderFactory,
 } from "../src/services/delivery-processor";
 import { renderNotification } from "../src/services/notification-renderer";
+import { PrivateWakeProcessor } from "../src/services/private-wake-processor";
 
 const timestamp = "2026-07-20T10:00:00.000Z";
 
@@ -29,6 +30,7 @@ const project: Project = {
   displayOrder: 0,
   category: "commerce",
   status: "active",
+  deliveryMode: "hosted",
   endpoint: "/v1/events/project-1",
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -66,7 +68,7 @@ const event: BellwireEvent = {
   id: "event-1",
   projectId: project.id,
   eventType: schema.eventType,
-  idempotencyKey: "order-1",
+  idempotencyKeyHash: "a".repeat(64),
   data: { amount: 1234.5, secret: "never render this" },
   sensitiveFields: ["secret"],
   occurredAt: timestamp,
@@ -93,7 +95,7 @@ async function seededRepository(includeDevice = true) {
   await repository.createProject(project);
   await repository.saveEventSchema(schema);
   await repository.saveNotificationSurface(surface);
-  await repository.createEventIfAbsent(event);
+  await repository.acceptHostedEvent(event, "disabled");
   if (includeDevice) await repository.saveDevice(device);
   return repository;
 }
@@ -113,7 +115,7 @@ async function repositoryWithQueuedDelivery(options: {
   if (options.schema !== false) await repository.saveEventSchema(options.schema ?? schema);
   if (options.surface !== false) await repository.saveNotificationSurface(options.surface ?? surface);
   await repository.saveDevice(selectedDevice);
-  await repository.createEventIfAbsent(selectedEvent);
+  await repository.acceptHostedEvent(selectedEvent, "disabled");
   await repository.createDeliveryIfAbsent({
     id: `queued-${selectedEvent.id}`,
     eventId: selectedEvent.id,
@@ -166,45 +168,13 @@ describe("notification delivery", () => {
     expect(factory).toHaveBeenCalledWith("sandbox");
     expect(send).toHaveBeenCalledWith(device.apnsToken, expect.any(Object));
     expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
-      title: project.name,
-      privacyMode: "local_enrichment",
+      title: "Payment received",
+      deliveryMode: "hosted",
     }));
   });
 
-  it("uses a direct reference for local enrichment without sending rendered detail", async () => {
-    const directEvent = {
-      ...event,
-      data: { directNotificationRef: "payment-ref-1234" },
-      sensitiveFields: ["directNotificationRef"],
-    };
-    const directSchema = {
-      ...schema,
-      fields: {
-        directNotificationRef: { type: "string" as const, required: true, sensitive: true },
-      },
-    };
-    const repository = await repositoryWithQueuedDelivery({
-      event: directEvent,
-      schema: directSchema,
-    });
-    const send = vi.fn<ApnsSender["send"]>().mockResolvedValue({});
-
-    await new DeliveryProcessor(repository, { send }).process(directEvent.id);
-
-    expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
-      title: project.name,
-      privacyMode: "local_enrichment",
-      directNotificationRef: "payment-ref-1234",
-    }));
-  });
-
-  it("renders the configured amount only in hosted detailed mode", async () => {
+  it("renders the configured amount for Hosted delivery", async () => {
     const repository = await seededRepository();
-    await repository.saveNotificationPreference({
-      userId: project.userId,
-      mode: "hosted_detailed",
-      updatedAt: timestamp,
-    });
     const send = vi.fn<ApnsSender["send"]>().mockResolvedValue({});
 
     await new DeliveryProcessor(repository, { send }).process(event.id);
@@ -212,7 +182,7 @@ describe("notification delivery", () => {
     expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
       title: "Payment received",
       body: "1,234.5 complete",
-      privacyMode: "hosted_detailed",
+      deliveryMode: "hosted",
     }));
   });
 
@@ -481,6 +451,47 @@ describe("notification delivery", () => {
   });
 });
 
+describe("Private wake delivery", () => {
+  it("allows only one concurrent worker to hold a Private delivery lease", async () => {
+    const repository = new InMemoryBellwireRepository();
+    const privateProject = { ...project, deliveryMode: "private" as const };
+    await repository.createProject(privateProject);
+    await repository.saveDevice(device);
+    const accepted = await repository.acceptPrivateWake({
+      id: "wake-1",
+      projectId: privateProject.id,
+      idempotencyKeyHash: "b".repeat(64),
+      reference: "N8Y1uFfPnM6J6q3O2gEmDA",
+      priority: "normal",
+      receivedAt: timestamp,
+      referenceExpiresAt: "2026-07-21T10:00:00.000Z",
+    }, "disabled");
+    expect(accepted.wake).toBeDefined();
+
+    let finishSend: (() => void) | undefined;
+    const send = vi.fn().mockImplementation(
+      () => new Promise<{ providerMessageId: string }>((resolve) => {
+        finishSend = () => resolve({ providerMessageId: "private-apns-1" });
+      }),
+    );
+    const first = new PrivateWakeProcessor(repository, { send }).process("wake-1");
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    const second = new PrivateWakeProcessor(repository, { send }).process("wake-1");
+    await expect(second).rejects.toThrow("require retry");
+    finishSend?.();
+    await first;
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await repository.listPrivateWakeDeliveries("wake-1")).toEqual([
+      expect.objectContaining({
+        status: "accepted_by_apns",
+        attemptCount: 1,
+      }),
+    ]);
+    expect((await repository.getPrivateWake("wake-1"))?.reference).toBeUndefined();
+  });
+});
+
 describe("APNs client", () => {
   it("signs a sandbox alert request with the expected push metadata", async () => {
     let captured: Request | undefined;
@@ -504,9 +515,10 @@ describe("APNs client", () => {
       threadId: "payments",
       priority: "high",
       eventId: "event-123",
+      signalId: "event-123",
       projectId: "project-123",
       logoUrl: "https://cdn.example.com/project.png",
-      privacyMode: "hosted_detailed",
+      deliveryMode: "hosted",
     });
 
     expect(result).toEqual({ providerMessageId: "provider-123" });
@@ -522,7 +534,8 @@ describe("APNs client", () => {
       },
       deepLink: "bellwire-self-host://events/event-123",
       projectLogoUrl: "https://cdn.example.com/project.png",
-      bellwireNotificationMode: "hosted_detailed",
+      bellwireDeliveryMode: "hosted",
+      protocolVersion: 2,
     });
   });
 
@@ -542,30 +555,32 @@ describe("APNs client", () => {
     }, fetchImpl);
 
     await client.send("abc123", {
-      title: "VideoSays",
-      body: "must not cross APNs",
-      sound: "default",
+      signalId: "wake-123",
       threadId: "payments",
       priority: "normal",
-      eventId: "event-123",
+      wakeId: "wake-123",
       projectId: "project-123",
-      privacyMode: "local_enrichment",
-      directNotificationRef: "payment-ref-1234",
+      deliveryMode: "private",
+      reference: "N8Y1uFfPnM6J6q3O2gEmDA",
     });
 
     const payload = await captured?.json() as Record<string, unknown>;
     expect(payload).toMatchObject({
       aps: {
         alert: {
-          title: "VideoSays",
-          "loc-key": "BELLWIRE_GENERIC_NOTIFICATION_BODY",
+          title: "Bellwire",
+          "loc-key": "BELLWIRE_PRIVATE_NOTIFICATION_BODY",
         },
         "mutable-content": 1,
       },
-      bellwireNotificationMode: "local_enrichment",
-      directNotificationRef: "payment-ref-1234",
+      bellwireDeliveryMode: "private",
+      protocolVersion: 2,
+      privateWakeRef: "N8Y1uFfPnM6J6q3O2gEmDA",
     });
-    expect(JSON.stringify(payload)).not.toContain("must not cross APNs");
+    expect(JSON.stringify(payload)).not.toContain("VideoSays");
+    expect(payload).not.toHaveProperty("wakeId");
+    expect(payload).not.toHaveProperty("eventId");
+    expect(payload).not.toHaveProperty("projectLogoUrl");
   });
 });
 

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct PaywallView: View {
     @EnvironmentObject private var purchaseManager: PurchaseManager
+    @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -18,7 +19,7 @@ struct PaywallView: View {
         ("iphone.gen3", "Keep 3 iPhones in sync"),
         ("clock.arrow.circlepath", "90 days of Hosted history"),
         ("rectangle.3.group", "10 custom Surfaces per project"),
-        ("wrench.and.screwdriver", "Advanced display, export, and diagnostics"),
+        ("rectangle.stack.badge.play", "Widgets, Live Activities, export, and diagnostics"),
     ]
 
     var body: some View {
@@ -61,6 +62,7 @@ struct PaywallView: View {
             .scrollIndicators(.hidden)
         }
         .task {
+            await model.captureProductEvent("paywall_viewed", source: "ios")
             await purchaseManager.prepare()
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.38)) {
                 appeared = true
@@ -514,8 +516,8 @@ private struct PaywallPlanRow: View {
 private extension BellwirePurchasePlan {
     var previewPrice: String {
         switch self {
-        case .yearly: return String(localized: "¥198.00")
-        case .monthly: return String(localized: "¥28.00")
+        case .yearly: return String(localized: "$29.99")
+        case .monthly: return String(localized: "$3.99")
         }
     }
 }

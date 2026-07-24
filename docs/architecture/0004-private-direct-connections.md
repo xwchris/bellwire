@@ -25,11 +25,15 @@ would sacrifice notification reliability.
 - Direct requests use a P-256 signature over the method, encoded path and
   query, timestamp, nonce, and body digest. User services reject stale
   timestamps and atomically consume nonces.
-- Notification privacy is account controlled. Generic mode relays only a
-  content-free alert. Local-enrichment mode relays the same alert plus an
-  opaque reference, then the Notification Service Extension fetches and
-  renders detail directly from the user's service. Hosted-detailed mode keeps
-  the existing server-rendered path for maximum delivery reliability.
+- Every project has exactly one data path: `private` or `hosted`.
+- Private is the default. Bellwire accepts only an opaque, short-lived
+  reference and relays a localized content-free APNs wake. The Notification
+  Service Extension and App fetch detail directly from the user's service.
+- Hosted is opt-in. An Agent can request it, but only the signed-in iOS user can
+  approve Bellwire Cloud receiving and retaining Event, Inbox, Surface, and
+  detailed notification content.
+- Private and Hosted APIs and tokens are strictly isolated; a failed Private
+  request never falls back to Hosted.
 
 ## Consequences
 
@@ -44,4 +48,5 @@ would sacrifice notification reliability.
   deterministic fallback.
 - Multiple devices require one registered public key and encrypted manifest per
   device.
-- Bellwire Direct is additive; existing hosted integrations remain compatible.
+- Direct v2 is the Private data-plane protocol. Version 1 and the former
+  account-wide three-mode notification preference are intentionally unsupported.

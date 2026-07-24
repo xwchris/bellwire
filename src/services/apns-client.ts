@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { importPKCS8, SignJWT } from "jose";
-import type { NotificationPrivacyMode } from "../domain/models";
 
 export interface ApnsConfiguration {
   keyId: string;
@@ -12,17 +11,19 @@ export interface ApnsConfiguration {
 }
 
 export interface ApnsNotification {
-  title: string;
-  body: string;
+  title?: string;
+  body?: string;
   subtitle?: string;
-  sound: string;
+  sound?: string;
   threadId: string;
   priority: "normal" | "high";
-  eventId: string;
+  signalId: string;
   projectId: string;
   logoUrl?: string;
-  privacyMode: NotificationPrivacyMode;
-  directNotificationRef?: string;
+  deliveryMode: "private" | "hosted";
+  eventId?: string;
+  wakeId?: string;
+  reference?: string;
 }
 
 export interface ApnsResult {
@@ -60,38 +61,43 @@ export class ApnsClient {
         "apns-topic": this.config.bundleId,
         "apns-push-type": "alert",
         "apns-priority": notification.priority === "high" ? "10" : "5",
-        "apns-collapse-id": notification.eventId,
+        "apns-collapse-id": notification.signalId,
         "content-type": "application/json",
       },
       body: JSON.stringify({
         aps: {
-          alert: notification.privacyMode === "hosted_detailed"
+          alert: notification.deliveryMode === "hosted"
             ? {
-                title: notification.title,
-                body: notification.body,
+                title: notification.title ?? "Bellwire",
+                body: notification.body ?? "",
                 ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
               }
             : {
-                title: notification.title,
-                "loc-key": "BELLWIRE_GENERIC_NOTIFICATION_BODY",
+                title: "Bellwire",
+                "loc-key": "BELLWIRE_PRIVATE_NOTIFICATION_BODY",
               },
-          sound: notification.sound,
+          sound: notification.sound ?? "default",
           "thread-id": notification.threadId,
-          ...(notification.logoUrl || (
-              notification.privacyMode === "local_enrichment"
-              && notification.directNotificationRef
-            )
+          ...(notification.logoUrl || notification.deliveryMode === "private"
             ? { "mutable-content": 1 }
             : {}),
         },
-        eventId: notification.eventId,
         projectId: notification.projectId,
-        deepLink: `${this.config.urlScheme}://events/${notification.eventId}`,
-        bellwireNotificationMode: notification.privacyMode,
-        ...(notification.privacyMode === "local_enrichment" && notification.directNotificationRef
-          ? { directNotificationRef: notification.directNotificationRef }
+        bellwireDeliveryMode: notification.deliveryMode,
+        protocolVersion: 2,
+        ...(notification.deliveryMode === "hosted" && notification.eventId
+          ? {
+              eventId: notification.eventId,
+              deepLink: `${this.config.urlScheme}://events/${notification.eventId}`,
+              ...(notification.logoUrl ? { projectLogoUrl: notification.logoUrl } : {}),
+            }
           : {}),
-        ...(notification.logoUrl ? { projectLogoUrl: notification.logoUrl } : {}),
+        ...(notification.deliveryMode === "private" && notification.reference
+          ? {
+              privateWakeRef: notification.reference,
+              deepLink: `${this.config.urlScheme}://private/${notification.projectId}/${notification.reference}`,
+            }
+          : {}),
       }),
     });
     if (!response.ok) {

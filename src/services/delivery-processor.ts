@@ -3,7 +3,6 @@ import type {
   Delivery,
   Device,
   EventSchema,
-  NotificationPreference,
   NotificationSurface,
   Project,
 } from "../domain/models";
@@ -22,7 +21,6 @@ interface DeliveryConfiguration {
   schema?: EventSchema;
   surface?: NotificationSurface;
   devices: Map<string, Device>;
-  notificationPreference: NotificationPreference;
   terminalReason?: string;
 }
 
@@ -117,17 +115,13 @@ export class DeliveryProcessor {
         ]),
       );
       const notification = renderNotification(activeProject, event, surface, fields);
-      const directNotificationRef = readDirectNotificationRef(event.data.directNotificationRef);
       try {
         const sent = await sender.send(device.apnsToken, {
           ...notification,
-          title: configuration.notificationPreference.mode === "hosted_detailed"
-            ? notification.title
-            : activeProject.name,
+          signalId: event.id,
           eventId: event.id,
           projectId: activeProject.id,
-          privacyMode: configuration.notificationPreference.mode,
-          ...(directNotificationRef ? { directNotificationRef } : {}),
+          deliveryMode: "hosted",
         });
         await this.repository.completeClaimedDelivery({
           ...delivery,
@@ -165,18 +159,18 @@ export class DeliveryProcessor {
     if (!project) {
       return {
         devices: new Map(),
-        notificationPreference: defaultNotificationPreference(""),
         terminalReason: "ProjectMissing",
       };
     }
-    const [schema, surface, devices, notificationPreference] = await Promise.all([
+    const [schema, surface, devices] = await Promise.all([
       this.repository.getEventSchema(project.id, eventType),
       this.repository.getNotificationSurface(project.id, eventType),
       this.repository.listDevices(project.userId),
-      this.repository.getNotificationPreference(project.userId),
     ]);
     const terminalReason = project.status === "paused"
       ? "ProjectPaused"
+      : project.deliveryMode !== "hosted"
+        ? "ProjectPrivate"
       : !schema
         ? "SchemaMissing"
         : !surface
@@ -189,25 +183,9 @@ export class DeliveryProcessor {
       ...(schema ? { schema } : {}),
       ...(surface ? { surface } : {}),
       devices: new Map(devices.map((device) => [device.id, device])),
-      notificationPreference: notificationPreference
-        ?? defaultNotificationPreference(project.userId),
       ...(terminalReason ? { terminalReason } : {}),
     };
   }
-}
-
-function defaultNotificationPreference(userId: string): NotificationPreference {
-  return {
-    userId,
-    mode: "local_enrichment",
-    updatedAt: new Date(0).toISOString(),
-  };
-}
-
-function readDirectNotificationRef(value: unknown): string | undefined {
-  return typeof value === "string" && /^[A-Za-z0-9._~-]{8,200}$/u.test(value)
-    ? value
-    : undefined;
 }
 
 function senderForEnvironment(
@@ -234,6 +212,7 @@ function terminalMessage(reason: string): string {
   const messages: Record<string, string> = {
     ProjectMissing: "Project no longer exists",
     ProjectPaused: "Project is paused",
+    ProjectPrivate: "Project uses Private delivery",
     SchemaMissing: "Event schema no longer exists",
     SurfaceMissing: "Notification Surface no longer exists",
     SurfaceDisabled: "Notification Surface is disabled",

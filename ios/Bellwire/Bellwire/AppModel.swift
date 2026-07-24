@@ -30,10 +30,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var events: [InboxEvent] = []
     @Published private(set) var devices: [DeviceRecord] = []
     @Published private(set) var agentConnections: [AgentConnectionRecord] = []
+    @Published private(set) var entitlement: AccountEntitlement?
+    @Published private(set) var pendingModeRequests: [DeliveryModeChangeRequest] = []
+    @Published private(set) var privateSyncErrors: [String: String] = [:]
+    @Published private(set) var privateLastSyncAt: [String: Date] = [:]
     @Published private(set) var revokingAgentConnectionID: String?
     @Published private(set) var notificationPermission: NotificationPermissionState = .unknown
-    @Published private(set) var notificationPrivacyMode: NotificationPrivacyMode = .localEnrichment
-    @Published private(set) var isUpdatingNotificationPrivacy = false
     @Published private(set) var isLoading = false
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isMarkingAllRead = false
@@ -44,6 +46,7 @@ final class AppModel: ObservableObject {
     @Published var pendingEventID: String?
 
     private let keychain = KeychainStore()
+    private let privateEventStore = PrivateEventStore()
     private var currentNonce: String?
     private var apnsToken: String?
     private var dashboardLoadTask: Task<Void, Never>?
@@ -124,16 +127,19 @@ final class AppModel: ObservableObject {
         let store = ProjectSummary(
             id: "store", name: "Northstar Store", slug: "northstar-store", icon: "cart.fill",
             logoUrl: nil, displayOrder: 0, category: "commerce", status: "active",
+            deliveryMode: .hosted,
             endpoint: "https://api.bellwire.app/v1/ingest/demo", createdAt: earlier, updatedAt: now
         )
         let agent = ProjectSummary(
             id: "agent", name: "Weekly Report Agent", slug: "weekly-report-agent", icon: "gearshape.2.fill",
             logoUrl: nil, displayOrder: 1, category: "automation", status: "active",
+            deliveryMode: .private,
             endpoint: "https://api.bellwire.app/v1/ingest/demo", createdAt: earlier, updatedAt: now
         )
         let deploy = ProjectSummary(
             id: "deploy", name: "Production Deploy", slug: "production-deploy", icon: "shippingbox.fill",
             logoUrl: nil, displayOrder: 2, category: "engineering", status: "active",
+            deliveryMode: .hosted,
             endpoint: "https://api.bellwire.app/v1/ingest/demo", createdAt: earlier, updatedAt: now
         )
         projects = [store, agent, deploy]
@@ -260,8 +266,11 @@ final class AppModel: ObservableObject {
             async let inboxRequest: InboxResponse = api.request("v1/inbox?limit=60")
             async let deviceRequest: DevicesResponse = api.request("v1/devices")
             async let connectionRequest: AgentConnectionsResponse = api.request("v1/agent-connections")
-            async let notificationPreferenceRequest: NotificationPreferenceRecord = api.request(
-                "v1/notification-preference"
+            async let entitlementRequest: AccountEntitlement? = try? await api.request(
+                "v1/account/entitlement"
+            )
+            async let modeRequest: DeliveryModeChangeRequestsResponse? = try? await api.request(
+                "v1/delivery-mode-requests?status=pending"
             )
             let (
                 projectResponse,
@@ -269,14 +278,16 @@ final class AppModel: ObservableObject {
                 inboxResponse,
                 deviceResponse,
                 connectionResponse,
-                notificationPreference
+                entitlementResponse,
+                modeResponse
             ) = try await (
                 projectRequest,
                 surfaceRequest,
                 inboxRequest,
                 deviceRequest,
                 connectionRequest,
-                notificationPreferenceRequest
+                entitlementRequest,
+                modeRequest
             )
             guard !Task.isCancelled, session?.user.id == userID else { return }
             let orderedProjects = projectResponse.projects.sorted(by: stableProjectOrder)
@@ -292,17 +303,32 @@ final class AppModel: ObservableObject {
             let cloudSurfaces = orderedSurfaces.filter { !directProjectIDs.contains($0.projectId) }
             projects = deduplicatedProjects(cloudProjects + cachedDirectProjects)
                 .sorted(by: stableProjectOrder)
+            for project in projects where project.deliveryMode == .private {
+                if let fetchedAt = privateEventStore.lastFetchedAt(
+                    accountID: userID,
+                    projectID: project.id
+                ) {
+                    privateLastSyncAt[project.id] = fetchedAt
+                }
+            }
             liveSurfaces = sortedSurfaces(
                 deduplicatedSurfaces(cloudSurfaces + cachedDirectSurfaces),
                 projects: projects
             )
-            events = inboxResponse.events
+            let cachedPrivateEvents = privateEventStore.inboxEvents(
+                accountID: userID,
+                projects: projects
+            )
+            events = (inboxResponse.events + cachedPrivateEvents)
+                .sorted { $0.receivedAt > $1.receivedAt }
             devices = deviceResponse.devices
             agentConnections = connectionResponse.connections
-            notificationPrivacyMode = notificationPreference.mode
+            if let entitlementResponse { entitlement = entitlementResponse }
+            if let modeResponse { pendingModeRequests = modeResponse.requests }
             lastDashboardRefreshAt = Date()
             errorMessage = nil
             await refreshDirectConnections(userID: userID)
+            await synchronizeNativeDisplays()
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = friendlyMessage(error)
@@ -310,13 +336,38 @@ final class AppModel: ObservableObject {
     }
 
     func loadEvent(id: String) async throws -> EventDetail {
-        try await api.request("v1/events/\(id)")
+        if let userID = session?.user.id,
+           let cached = privateEventStore.event(accountID: userID, eventID: id),
+           let project = projects.first(where: { $0.id == cached.projectID }) {
+            let referenceHash = SHA256.hash(data: Data(cached.reference.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+            return EventDetail(
+                id: cached.eventID,
+                projectId: cached.projectID,
+                eventType: cached.eventType,
+                idempotencyKeyHash: referenceHash,
+                data: cached.data,
+                occurredAt: ISO8601DateFormatter.bellwire.string(from: cached.occurredAt),
+                receivedAt: ISO8601DateFormatter.bellwire.string(from: cached.fetchedAt),
+                status: "local",
+                readAt: cached.readAt.map { ISO8601DateFormatter.bellwire.string(from: $0) },
+                project: EventProject(
+                    id: project.id,
+                    name: project.name,
+                    icon: project.icon,
+                    logoUrl: cached.logoURL ?? project.logoUrl
+                ),
+                sensitiveFields: [],
+                deliveries: []
+            )
+        }
+        let detail: EventDetail = try await api.request("v1/events/\(id)")
+        return detail
     }
 
     func loadProject(id: String) async throws -> (ProjectOverview, [InboxEvent]) {
-        async let overviewRequest: ProjectOverview = api.request("v1/projects/\(id)")
-        async let eventsRequest: EventPage = api.request("v1/projects/\(id)/events?limit=30")
-        let (overview, page) = try await (overviewRequest, eventsRequest)
+        let overview: ProjectOverview = try await api.request("v1/projects/\(id)")
         let summary = ProjectSummary(
             id: overview.id,
             name: overview.name,
@@ -326,11 +377,67 @@ final class AppModel: ObservableObject {
             displayOrder: overview.displayOrder,
             category: overview.category,
             status: overview.status,
+            deliveryMode: overview.deliveryMode,
             endpoint: overview.endpoint,
             createdAt: overview.createdAt,
             updatedAt: overview.updatedAt
         )
+        if overview.deliveryMode == .private {
+            let privateEvents = session.map {
+                privateEventStore.inboxEvents(accountID: $0.user.id, projects: [summary])
+            } ?? []
+            return (overview, Array(privateEvents.prefix(30)))
+        }
+        let page: EventPage = try await api.request("v1/projects/\(id)/events?limit=30")
         return (overview, page.events.map { $0.inboxEvent(project: summary) })
+    }
+
+    func exportProject(_ project: ProjectOverview) async throws -> URL {
+        guard entitlement?.hasPro == true else {
+            throw ProjectExportError.proRequired
+        }
+        let data: Data
+        if project.deliveryMode == .private {
+            guard let userID = session?.user.id else { throw ClientError.signedOut }
+            let payload = PrivateProjectExport(
+                version: 1,
+                exportedAt: ISO8601DateFormatter.bellwire.string(from: .now),
+                project: PrivateProjectExport.Project(
+                    id: project.id,
+                    name: project.name,
+                    deliveryMode: "private"
+                ),
+                events: try privateEventStore.exportPayloads(
+                    accountID: userID,
+                    projectID: project.id
+                )
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            data = try encoder.encode(payload)
+        } else {
+            data = try await api.requestData("v1/projects/\(project.id)/export")
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "BellwireExports", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let safeName = project.name
+            .lowercased()
+            .replacingOccurrences(
+                of: #"[^a-z0-9_-]+"#,
+                with: "-",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let url = directory.appending(
+            path: "\(safeName.isEmpty ? "project" : safeName)-bellwire-export.json"
+        )
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        return url
     }
 
     func setProjectPaused(id: String, paused: Bool) async throws -> ProjectSummary {
@@ -344,17 +451,15 @@ final class AppModel: ObservableObject {
     }
 
     func deleteProject(id: String) async throws {
-        if let userID = session?.user.id,
-           try keychain.deleteDirectConnection(projectID: id, userID: userID) {
-            projects.removeAll { $0.id == id }
-            liveSurfaces.removeAll { $0.projectId == id }
-            events.removeAll { $0.projectId == id }
-            return
-        }
         try await api.requestVoid("v1/projects/\(id)", method: .delete)
+        if let userID = session?.user.id {
+            _ = try? keychain.deleteDirectConnection(projectID: id, userID: userID)
+            try? privateEventStore.clear(accountID: userID, projectID: id)
+        }
         projects.removeAll { $0.id == id }
         liveSurfaces.removeAll { $0.projectId == id }
         events.removeAll { $0.projectId == id }
+        await synchronizeNativeDisplays()
     }
 
     private func stableProjectOrder(_ left: ProjectSummary, _ right: ProjectSummary) -> Bool {
@@ -429,10 +534,100 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func submitAppleTransaction(
+        _ signedTransactionInfo: String,
+        source: String
+    ) async throws -> AccountEntitlement {
+        let value: AccountEntitlement = try await api.request(
+            "v1/billing/apple/transactions",
+            method: .post,
+            body: AppleTransactionPayload(
+                signedTransactionInfo: signedTransactionInfo,
+                source: source
+            )
+        )
+        entitlement = value
+        await synchronizeNativeDisplays()
+        return value
+    }
+
+    func captureProductEvent(_ event: String, source: String) async {
+        try? await api.requestVoid(
+            "v1/analytics/events",
+            method: .post,
+            body: ProductAnalyticsPayload(
+                event: event,
+                properties: ["source": source]
+            )
+        )
+    }
+
+    func refreshServerEntitlement() async throws -> AccountEntitlement {
+        let value: AccountEntitlement = try await api.request("v1/account/entitlement")
+        entitlement = value
+        await synchronizeNativeDisplays()
+        return value
+    }
+
+    func resolveModeRequest(id: String, approve: Bool) async {
+        do {
+            let _: DeliveryModeChangeRequest = try await api.request(
+                "v1/delivery-mode-requests/\(id)/\(approve ? "approve" : "reject")",
+                method: .post
+            )
+            pendingModeRequests.removeAll { $0.id == id }
+            await loadDashboard()
+            BellwireHaptics.success()
+        } catch {
+            errorMessage = friendlyMessage(error)
+        }
+    }
+
+    func deleteDevice(id: String) async {
+        do {
+            try await api.requestVoid("v1/devices/\(id)", method: .delete)
+            devices.removeAll { $0.id == id }
+            await refreshServerEntitlementIfPossible()
+            BellwireHaptics.success()
+        } catch {
+            errorMessage = friendlyMessage(error)
+            BellwireHaptics.error()
+        }
+    }
+
+    private func refreshServerEntitlementIfPossible() async {
+        if let value: AccountEntitlement = try? await api.request("v1/account/entitlement") {
+            entitlement = value
+            await synchronizeNativeDisplays()
+        }
+    }
+
+    func clearPrivateHistory() {
+        guard let userID = session?.user.id else { return }
+        do {
+            try privateEventStore.clear(accountID: userID)
+            events.removeAll { $0.id.hasPrefix("private:") }
+            BellwireHaptics.success()
+        } catch {
+            errorMessage = friendlyMessage(error)
+        }
+    }
+
     func markRead(id: String) async {
         guard let index = events.firstIndex(where: { $0.id == id }), events[index].isUnread else { return }
         do {
-            let response: ReadResponse = try await api.request("v1/events/\(id)/read", method: .post)
+            let readAt: String
+            if id.hasPrefix("private:"), let userID = session?.user.id {
+                let date = Date()
+                _ = try privateEventStore.markRead(accountID: userID, eventID: id, at: date)
+                readAt = ISO8601DateFormatter.bellwire.string(from: date)
+            } else {
+                let response: ReadResponse = try await api.request(
+                    "v1/events/\(id)/read",
+                    method: .post
+                )
+                readAt = response.readAt
+            }
             let old = events[index]
             events[index] = InboxEvent(
                 id: old.id,
@@ -442,7 +637,7 @@ final class AppModel: ObservableObject {
                 occurredAt: old.occurredAt,
                 receivedAt: old.receivedAt,
                 status: old.status,
-                readAt: response.readAt,
+                readAt: readAt,
                 project: old.project,
                 sensitiveFields: old.sensitiveFields
             )
@@ -458,6 +653,13 @@ final class AppModel: ObservableObject {
         defer { isMarkingAllRead = false }
         do {
             let response: ReadAllResponse = try await api.request("v1/inbox/read-all", method: .post)
+            let localCount: Int
+            if let userID = session?.user.id {
+                localCount = try privateEventStore.markAllRead(accountID: userID)
+            } else {
+                localCount = 0
+            }
+            let readAt = ISO8601DateFormatter.bellwire.string(from: .now)
             events = events.map { event in
                 guard event.isUnread else { return event }
                 return InboxEvent(
@@ -468,12 +670,12 @@ final class AppModel: ObservableObject {
                     occurredAt: event.occurredAt,
                     receivedAt: event.receivedAt,
                     status: event.status,
-                    readAt: response.readAt,
+                    readAt: event.id.hasPrefix("private:") ? readAt : response.readAt,
                     project: event.project,
                     sensitiveFields: event.sensitiveFields
                 )
             }
-            return response.updatedCount
+            return response.updatedCount + localCount
         } catch {
             errorMessage = friendlyMessage(error)
             return 0
@@ -525,26 +727,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func setNotificationPrivacyMode(_ mode: NotificationPrivacyMode) async {
-        guard mode != notificationPrivacyMode, !isUpdatingNotificationPrivacy else { return }
-        let previous = notificationPrivacyMode
-        notificationPrivacyMode = mode
-        isUpdatingNotificationPrivacy = true
-        defer { isUpdatingNotificationPrivacy = false }
-        do {
-            let saved: NotificationPreferenceRecord = try await api.request(
-                "v1/notification-preference",
-                method: .patch,
-                body: UpdateNotificationPreferencePayload(mode: mode)
-            )
-            notificationPrivacyMode = saved.mode
-            BellwireHaptics.selection()
-        } catch {
-            notificationPrivacyMode = previous
-            errorMessage = friendlyMessage(error)
-        }
-    }
-
     func refreshNotificationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         switch settings.authorizationStatus {
@@ -562,9 +744,21 @@ final class AppModel: ObservableObject {
     }
 
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "bellwire", url.host == "events" else { return }
-        let id = url.pathComponents.dropFirst().first
-        if let id, !id.isEmpty { pendingEventID = id }
+        guard url.scheme == AppConfig.urlScheme else { return }
+        if url.host == "events" {
+            let id = url.pathComponents.dropFirst().first
+            if let id, !id.isEmpty { pendingEventID = id }
+            return
+        }
+        guard url.host == "private" else { return }
+        let components = Array(url.pathComponents.dropFirst())
+        guard components.count == 2 else { return }
+        Task { @MainActor [weak self] in
+            await self?.openPrivateNotification(
+                projectID: components[0],
+                reference: components[1]
+            )
+        }
     }
 
     func handleRemoteNotification(deepLink: URL? = nil) {
@@ -575,12 +769,59 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func openPrivateNotification(projectID: String, reference: String) async {
+        guard let userID = session?.user.id,
+              reference.range(
+                of: #"^[A-Za-z0-9_-]{22,200}$"#,
+                options: .regularExpression
+              ) != nil,
+              let manifest = keychain.directConnectionManifests(userID: userID)
+                .first(where: { $0.project.id == projectID }),
+              let identity = try? keychain.deviceIdentity(userID: userID),
+              let url = manifest.notificationURL(reference: reference),
+              let request = signedDirectRequest(
+                url: url,
+                identity: identity,
+                connectionID: manifest.connectionId,
+                timeout: 8
+              )
+        else { return }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  data.count <= 64 * 1_024
+            else { throw DirectConnectionError.invalidResponse }
+            let payload = try JSONDecoder().decode(PrivateEventPayload.self, from: data)
+            guard payload.reference == reference, privatePayloadIsValid(payload) else {
+                throw DirectConnectionError.invalidResponse
+            }
+            try privateEventStore.merge(
+                accountID: userID,
+                projectID: projectID,
+                payloads: [payload]
+            )
+            let hosted = events.filter { !$0.id.hasPrefix("private:") }
+            events = (hosted + privateEventStore.inboxEvents(accountID: userID, projects: projects))
+                .sorted { $0.receivedAt > $1.receivedAt }
+            pendingEventID = "private:\(projectID):\(reference)"
+            privateLastSyncAt[projectID] = .now
+            privateSyncErrors.removeValue(forKey: projectID)
+        } catch {
+            privateSyncErrors[projectID] = friendlyMessage(error)
+        }
+    }
+
     func signOut() {
         dashboardLoadTask?.cancel()
         sessionRefreshTask?.cancel()
         dashboardLoadTask = nil
         dashboardLoadID = nil
         sessionRefreshTask = nil
+        if let userID = session?.user.id {
+            keychain.deleteDirectData(userID: userID)
+            try? privateEventStore.clear(accountID: userID)
+        }
         keychain.delete()
         keychain.deleteDirectNotificationContext()
         session = nil
@@ -589,12 +830,38 @@ final class AppModel: ObservableObject {
         events = []
         devices = []
         agentConnections = []
-        notificationPrivacyMode = .localEnrichment
+        entitlement = nil
+        pendingModeRequests = []
+        privateSyncErrors = [:]
+        privateLastSyncAt = [:]
         revokingAgentConnectionID = nil
         binding = nil
         pendingEventID = nil
         lastDashboardRefreshAt = nil
         isLoading = false
+        Task { await NativeDisplayManager.shared.clear() }
+    }
+
+    func startLiveActivity(for surface: LiveSurfaceRecord) async throws {
+        guard entitlement?.hasPro == true else {
+            throw ProjectExportError.proRequired
+        }
+        try await NativeDisplayManager.shared.startLiveActivity(for: surface)
+    }
+
+    func stopLiveActivity(surfaceID: String) async {
+        await NativeDisplayManager.shared.stopLiveActivity(surfaceID: surfaceID)
+    }
+
+    func isLiveActivityActive(surfaceID: String) -> Bool {
+        NativeDisplayManager.shared.isLive(surfaceID: surfaceID)
+    }
+
+    private func synchronizeNativeDisplays() async {
+        await NativeDisplayManager.shared.synchronize(
+            surfaces: liveSurfaces,
+            isPro: entitlement?.hasPro == true
+        )
     }
 
     private func registerDevice(_ token: String) async {
@@ -671,7 +938,13 @@ final class AppModel: ObservableObject {
                         DirectConnectionManifest.self,
                         from: plaintext
                       ),
-                      manifest.surfacesURL != nil
+                      manifest.version == 2,
+                      manifest.project.id == envelope.projectId,
+                      envelope.manifestVersion == 2,
+                      manifest.surfacesURL != nil,
+                      manifest.inboxURL() != nil,
+                      manifest.capabilities.contains("surfaces"),
+                      manifest.capabilities.contains("inbox")
                 else { continue }
                 manifests.removeAll { $0.connectionId == manifest.connectionId }
                 manifests.append(manifest)
@@ -682,8 +955,9 @@ final class AppModel: ObservableObject {
                         identity: identity
                     )
                     try await api.requestVoid(
-                        "v1/direct-connections/\(envelope.id)",
-                        method: .delete
+                        "v1/direct-connections/\(envelope.id)/ack",
+                        method: .post,
+                        body: DirectConnectionAckPayload(deviceKeyId: identity.id)
                     )
                 } catch {
                     continue
@@ -697,19 +971,38 @@ final class AppModel: ObservableObject {
         )
 
         for manifest in manifests {
-            guard let result = try? await fetchDirectSurfaces(
-                manifest: manifest,
-                identity: identity
-            ) else { continue }
-            let nextProjects = deduplicatedProjects(
-                projects.filter { $0.id != result.project.id } + [result.project]
-            ).sorted(by: stableProjectOrder)
-            let nextSurfaces = deduplicatedSurfaces(
-                liveSurfaces.filter { $0.projectId != result.project.id } + result.surfaces
-            )
-            projects = nextProjects
-            liveSurfaces = sortedSurfaces(nextSurfaces, projects: nextProjects)
+            do {
+                async let surfaceResult = fetchDirectSurfaces(
+                    manifest: manifest,
+                    identity: identity
+                )
+                async let inboxPayloads = fetchDirectInbox(
+                    manifest: manifest,
+                    identity: identity
+                )
+                let (result, payloads) = try await (surfaceResult, inboxPayloads)
+                try privateEventStore.merge(
+                    accountID: userID,
+                    projectID: manifest.project.id,
+                    payloads: payloads
+                )
+                let nextProjects = deduplicatedProjects(
+                    projects.filter { $0.id != result.project.id } + [result.project]
+                ).sorted(by: stableProjectOrder)
+                let nextSurfaces = deduplicatedSurfaces(
+                    liveSurfaces.filter { $0.projectId != result.project.id } + result.surfaces
+                )
+                projects = nextProjects
+                liveSurfaces = sortedSurfaces(nextSurfaces, projects: nextProjects)
+                privateLastSyncAt[manifest.project.id] = .now
+                privateSyncErrors.removeValue(forKey: manifest.project.id)
+            } catch {
+                privateSyncErrors[manifest.project.id] = friendlyMessage(error)
+            }
         }
+        let hostedEvents = events.filter { !$0.id.hasPrefix("private:") }
+        events = (hostedEvents + privateEventStore.inboxEvents(accountID: userID, projects: projects))
+            .sorted { $0.receivedAt > $1.receivedAt }
     }
 
     private func fetchDirectSurfaces(
@@ -719,28 +1012,11 @@ final class AppModel: ObservableObject {
         guard let url = manifest.surfacesURL else {
             throw DirectConnectionError.invalidManifest
         }
-        let timestamp = String(Int(Date().timeIntervalSince1970))
-        let nonce = randomNonce()
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let path = (components?.percentEncodedPath.isEmpty == false
-            ? components?.percentEncodedPath
-            : "/") ?? "/"
-        let target = components?.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
-        let emptyHash = SHA256.hash(data: Data())
-            .map { String(format: "%02x", $0) }
-            .joined()
-        let canonical = ["GET", target, timestamp, nonce, emptyHash].joined(separator: "\n")
-        let signature = try identity.signature(for: Data(canonical.utf8))
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(manifest.connectionId, forHTTPHeaderField: "X-Bellwire-Connection")
-        request.setValue(identity.id, forHTTPHeaderField: "X-Bellwire-Key-Id")
-        request.setValue(timestamp, forHTTPHeaderField: "X-Bellwire-Timestamp")
-        request.setValue(nonce, forHTTPHeaderField: "X-Bellwire-Nonce")
-        request.setValue(signature, forHTTPHeaderField: "X-Bellwire-Signature")
+        guard let request = signedDirectRequest(
+            url: url,
+            identity: identity,
+            connectionID: manifest.connectionId
+        ) else { throw DirectConnectionError.invalidManifest }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse,
@@ -761,13 +1037,109 @@ final class AppModel: ObservableObject {
             icon: manifest.project.icon,
             logoUrl: manifest.project.logoUrl,
             displayOrder: manifest.project.displayOrder,
-            category: "direct",
+            category: manifest.project.category,
             status: "active",
+            deliveryMode: .private,
             endpoint: manifest.baseUrl,
             createdAt: now,
             updatedAt: now
         )
         return DirectSurfaceResult(project: project, surfaces: payload.surfaces)
+    }
+
+    private func fetchDirectInbox(
+        manifest: DirectConnectionManifest,
+        identity: DeviceIdentity
+    ) async throws -> [PrivateEventPayload] {
+        var cursor: String?
+        var payloads: [PrivateEventPayload] = []
+        for _ in 0..<10 {
+            guard let url = manifest.inboxURL(cursor: cursor),
+                  let request = signedDirectRequest(
+                    url: url,
+                    identity: identity,
+                    connectionID: manifest.connectionId
+                  )
+            else { throw DirectConnectionError.invalidManifest }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  data.count <= 1_048_576
+            else { throw DirectConnectionError.invalidResponse }
+            let page = try JSONDecoder().decode(PrivateInboxPage.self, from: data)
+            guard page.events.count <= 50,
+                  page.events.allSatisfy({ privatePayloadIsValid($0) })
+            else { throw DirectConnectionError.invalidResponse }
+            payloads.append(contentsOf: page.events)
+            guard let next = page.nextCursor, !next.isEmpty, next != cursor else { break }
+            cursor = next
+        }
+        return payloads
+    }
+
+    private func signedDirectRequest(
+        url: URL,
+        identity: DeviceIdentity,
+        connectionID: String,
+        timeout: TimeInterval = 15
+    ) -> URLRequest? {
+        let timestamp = String(Int(Date().timeIntervalSince1970))
+        let nonce = randomNonce()
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = (components?.percentEncodedPath.isEmpty == false
+            ? components?.percentEncodedPath
+            : "/") ?? "/"
+        let target = components?.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
+        let emptyHash = SHA256.hash(data: Data())
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let canonical = ["GET", target, timestamp, nonce, emptyHash].joined(separator: "\n")
+        guard let signature = try? identity.signature(for: Data(canonical.utf8)) else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(Locale.preferredLanguages.first ?? "en", forHTTPHeaderField: "Accept-Language")
+        request.setValue(connectionID, forHTTPHeaderField: "X-Bellwire-Connection")
+        request.setValue(identity.id, forHTTPHeaderField: "X-Bellwire-Key-Id")
+        request.setValue(timestamp, forHTTPHeaderField: "X-Bellwire-Timestamp")
+        request.setValue(nonce, forHTTPHeaderField: "X-Bellwire-Nonce")
+        request.setValue(signature, forHTTPHeaderField: "X-Bellwire-Signature")
+        return request
+    }
+
+    private func privatePayloadIsValid(_ payload: PrivateEventPayload) -> Bool {
+        payload.reference.range(
+            of: #"^[A-Za-z0-9_-]{22,200}$"#,
+            options: .regularExpression
+        ) != nil
+            && !payload.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && payload.title.count <= 240
+            && !payload.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && payload.body.count <= 1_000
+            && (payload.subtitle?.count ?? 0) <= 240
+            && ISO8601DateFormatter.bellwireDate(from: payload.occurredAt) != nil
+            && validOptionalHTTPSURL(payload.logoUrl)
+            && validOptionalDeepLink(payload.deepLink)
+    }
+
+    private func validOptionalHTTPSURL(_ value: String?) -> Bool {
+        guard let value else { return true }
+        guard let url = URL(string: value) else { return false }
+        return url.scheme?.lowercased() == "https"
+            && url.user == nil
+            && url.password == nil
+            && url.host != nil
+    }
+
+    private func validOptionalDeepLink(_ value: String?) -> Bool {
+        guard let value else { return true }
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+        return scheme == "https" || scheme == "bellwire"
     }
 
     private func friendlyMessage(_ error: Error) -> String {
@@ -795,6 +1167,27 @@ final class AppModel: ObservableObject {
             }
         }
         return result
+    }
+}
+
+private struct PrivateProjectExport: Encodable {
+    struct Project: Encodable {
+        let id: String
+        let name: String
+        let deliveryMode: String
+    }
+
+    let version: Int
+    let exportedAt: String
+    let project: Project
+    let events: [PrivateEventPayload]
+}
+
+private enum ProjectExportError: LocalizedError {
+    case proRequired
+
+    var errorDescription: String? {
+        String(localized: "Project export is included with Bellwire Pro.")
     }
 }
 

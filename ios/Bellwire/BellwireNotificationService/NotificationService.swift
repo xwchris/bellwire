@@ -8,7 +8,7 @@ final class NotificationService: UNNotificationServiceExtension {
     private static let maximumLogoBytes: Int64 = 5 * 1_024 * 1_024
     private static let maximumDetailBytes = 64 * 1_024
     private static let sharedKeychainService = "app.bellwire.direct-shared"
-    private static let sharedContextAccount = "notification-context-v1"
+    private static let sharedContextAccount = "notification-context-v2"
 
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttemptContent: UNMutableNotificationContent?
@@ -26,9 +26,10 @@ final class NotificationService: UNNotificationServiceExtension {
         }
         bestAttemptContent = content
 
-        if content.userInfo["bellwireNotificationMode"] as? String == "local_enrichment",
+        if content.userInfo["bellwireDeliveryMode"] as? String == "private",
+           content.userInfo["protocolVersion"] as? Int == 2,
            let projectID = content.userInfo["projectId"] as? String,
-           let reference = content.userInfo["directNotificationRef"] as? String,
+           let reference = content.userInfo["privateWakeRef"] as? String,
            isValidReference(reference),
            let context = readDirectContext(),
            let manifest = context.manifests.first(where: { $0.project.id == projectID }),
@@ -38,7 +39,7 @@ final class NotificationService: UNNotificationServiceExtension {
                context: context,
                connectionID: manifest.connectionId
            ) {
-            fetchDetail(request, content: content)
+            fetchDetail(request, expectedReference: reference, content: content)
             return
         }
 
@@ -51,7 +52,11 @@ final class NotificationService: UNNotificationServiceExtension {
         if let bestAttemptContent { finish(with: bestAttemptContent) }
     }
 
-    private func fetchDetail(_ request: URLRequest, content: UNMutableNotificationContent) {
+    private func fetchDetail(
+        _ request: URLRequest,
+        expectedReference: String,
+        content: UNMutableNotificationContent
+    ) {
         detailTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
             guard let self,
                   let data,
@@ -59,7 +64,8 @@ final class NotificationService: UNNotificationServiceExtension {
                   let httpResponse = response as? HTTPURLResponse,
                   (200..<300).contains(httpResponse.statusCode),
                   let detail = try? JSONDecoder().decode(DirectNotificationDetail.self, from: data),
-                  detail.isValid
+                  detail.isValid,
+                  detail.reference == expectedReference
             else {
                 self?.loadLogo(
                     from: content.userInfo["projectLogoUrl"] as? String,
@@ -171,7 +177,7 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private func isValidReference(_ value: String) -> Bool {
-        value.range(of: #"^[A-Za-z0-9._~-]{8,200}$"#, options: .regularExpression) != nil
+        value.range(of: #"^[A-Za-z0-9_-]{22,200}$"#, options: .regularExpression) != nil
     }
 
     private func makeAttachment(
@@ -228,19 +234,18 @@ private struct DirectConnectionManifest: Decodable {
     let version: Int
     let connectionId: String
     let baseUrl: String
-    let notificationPath: String?
+    let endpoints: DirectEndpointsManifest
     let project: DirectProjectManifest
 
     func notificationURL(reference: String) -> URL? {
-        guard version == 1,
-              let notificationPath,
+        guard version == 2,
               let base = URL(string: baseUrl),
               base.scheme?.lowercased() == "https",
               base.user == nil,
               base.password == nil,
-              notificationPath.hasPrefix("/"),
-              !notificationPath.hasPrefix("//"),
-              let rawURL = URL(string: notificationPath, relativeTo: base)?.absoluteURL,
+              endpoints.notification.hasPrefix("/"),
+              !endpoints.notification.hasPrefix("//"),
+              let rawURL = URL(string: endpoints.notification, relativeTo: base)?.absoluteURL,
               var components = URLComponents(url: rawURL, resolvingAgainstBaseURL: false)
         else { return nil }
         var queryItems = components.queryItems ?? []
@@ -251,22 +256,83 @@ private struct DirectConnectionManifest: Decodable {
     }
 }
 
+private struct DirectEndpointsManifest: Decodable {
+    let notification: String
+}
+
 private struct DirectProjectManifest: Decodable {
     let id: String
 }
 
 private struct DirectNotificationDetail: Decodable {
+    let reference: String
+    let eventType: String
     let title: String
     let body: String
     let subtitle: String?
+    let occurredAt: String
+    let data: [String: JSONValue]
+    let deepLink: String?
     let logoUrl: String?
 
     var isValid: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && title.count <= 120
-            && body.count <= 240
-            && (subtitle?.count ?? 0) <= 120
-            && (logoUrl == nil || URL(string: logoUrl!)?.scheme?.lowercased() == "https")
+            && title.count <= 240
+            && body.count <= 1_000
+            && (subtitle?.count ?? 0) <= 240
+            && reference.range(
+                of: #"^[A-Za-z0-9_-]{22,200}$"#,
+                options: .regularExpression
+            ) != nil
+            && !eventType.isEmpty
+            && Self.validISO8601Date(occurredAt)
+            && validHTTPSURL(logoUrl)
+            && validDeepLink(deepLink)
+    }
+
+    private func validHTTPSURL(_ value: String?) -> Bool {
+        guard let value else { return true }
+        guard let url = URL(string: value) else { return false }
+        return url.scheme?.lowercased() == "https"
+            && url.user == nil
+            && url.password == nil
+            && url.host != nil
+    }
+
+    private func validDeepLink(_ value: String?) -> Bool {
+        guard let value else { return true }
+        guard let scheme = URL(string: value)?.scheme?.lowercased() else { return false }
+        return ["https", "bellwire"].contains(scheme)
+    }
+
+    private static func validISO8601Date(_ value: String) -> Bool {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if formatter.date(from: value) != nil { return true }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value) != nil
+    }
+}
+
+private enum JSONValue: Decodable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { self = .null }
+        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
+        else if let value = try? container.decode(Double.self) { self = .number(value) }
+        else if let value = try? container.decode(String.self) { self = .string(value) }
+        else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else {
+            self = .array(try container.decode([JSONValue].self))
+        }
     }
 }

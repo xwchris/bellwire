@@ -6,8 +6,17 @@ import { SupabaseBellwireRepository } from "./repositories/supabase-bellwire-rep
 import { PrincipalAuthenticator } from "./security/authenticator";
 import { BellwireService } from "./services/bellwire-service";
 import { AppleAuthService, AppleTokenClient } from "./services/apple-auth-service";
+import {
+  AppleBillingService,
+  OfficialAppleBillingVerifier,
+} from "./services/apple-billing-service";
 import { ApnsClient } from "./services/apns-client";
 import { DeliveryProcessor } from "./services/delivery-processor";
+import { PrivateWakeProcessor } from "./services/private-wake-processor";
+import {
+  PostHogProductAnalytics,
+  type ProductAnalytics,
+} from "./services/product-analytics";
 import {
   QueueDeliveryDispatcher,
   type DeliveryQueueMessage,
@@ -22,12 +31,17 @@ export interface Env {
   APPLE_SIGN_IN_CLIENT_ID?: string;
   APPLE_SIGN_IN_PRIVATE_KEY?: string;
   APPLE_TOKEN_ENCRYPTION_KEY?: string;
+  APPLE_ROOT_CERTIFICATES_BASE64?: string;
+  APPLE_APP_ID?: string;
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;
   APNS_BUNDLE_ID?: string;
   APP_URL_SCHEME?: string;
   APNS_PRIVATE_KEY?: string;
   APNS_ENVIRONMENT?: "sandbox" | "production";
+  ENTITLEMENT_ENFORCEMENT_MODE?: "disabled" | "shadow" | "enforce";
+  POSTHOG_PROJECT_KEY?: string;
+  POSTHOG_HOST?: string;
   DELIVERY_QUEUE?: Queue<DeliveryQueueMessage>;
 }
 
@@ -43,10 +57,19 @@ export default {
     const dispatcher = env.DELIVERY_QUEUE
       ? new QueueDeliveryDispatcher(env.DELIVERY_QUEUE)
       : undefined;
+    const analytics = createProductAnalytics(env);
     const appleAuthService = createAppleAuthService(env, repository);
+    const appleBillingService = createAppleBillingService(env, repository, analytics);
     const app = createApp({
-      service: new BellwireService(repository, dispatcher, appleAuthService),
+      service: new BellwireService(
+        repository,
+        dispatcher,
+        appleAuthService,
+        env.ENTITLEMENT_ENFORCEMENT_MODE ?? "shadow",
+        analytics,
+      ),
       authenticator,
+      appleBillingService,
     });
     return app.fetch(request, env, executionContext);
   },
@@ -61,10 +84,25 @@ export default {
       privateKey: requiredEnv(env.APNS_PRIVATE_KEY, "APNS_PRIVATE_KEY"),
       environment,
     }));
+    const privateWakeProcessor = new PrivateWakeProcessor(
+      repository,
+      (environment) => new ApnsClient({
+        keyId: requiredEnv(env.APNS_KEY_ID, "APNS_KEY_ID"),
+        teamId: requiredEnv(env.APNS_TEAM_ID, "APNS_TEAM_ID"),
+        bundleId: requiredEnv(env.APNS_BUNDLE_ID, "APNS_BUNDLE_ID"),
+        urlScheme: env.APP_URL_SCHEME ?? "bellwire",
+        privateKey: requiredEnv(env.APNS_PRIVATE_KEY, "APNS_PRIVATE_KEY"),
+        environment,
+      }),
+    );
     await Promise.all(
       batch.messages.map(async (message) => {
         try {
-          await processor.process(message.body.eventId);
+          if (message.body.kind === "private_wake") {
+            await privateWakeProcessor.process(message.body.wakeId);
+          } else {
+            await processor.process(message.body.eventId);
+          }
           message.ack();
         } catch (error) {
           console.error(
@@ -75,6 +113,10 @@ export default {
         }
       }),
     );
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await repositoryForEnv(env).runMaintenance(new Date().toISOString());
   },
 };
 
@@ -118,4 +160,46 @@ function createAppleAuthService(
     new AppleTokenClient({ keyId, teamId, clientId, privateKey }),
     encryptionKey,
   );
+}
+
+function createAppleBillingService(
+  env: Env,
+  repository: BellwireRepository,
+  analytics?: ProductAnalytics,
+): AppleBillingService | undefined {
+  if (!env.APPLE_ROOT_CERTIFICATES_BASE64 && !env.APPLE_APP_ID) return undefined;
+  const rootsRaw = requiredEnv(
+    env.APPLE_ROOT_CERTIFICATES_BASE64,
+    "APPLE_ROOT_CERTIFICATES_BASE64",
+  );
+  let rootCertificatesBase64: string[];
+  try {
+    const decoded: unknown = JSON.parse(rootsRaw);
+    if (
+      !Array.isArray(decoded) ||
+      decoded.length === 0 ||
+      decoded.some((value) => typeof value !== "string" || value.length < 100)
+    ) {
+      throw new Error("invalid certificates");
+    }
+    rootCertificatesBase64 = decoded;
+  } catch {
+    throw new Error("APPLE_ROOT_CERTIFICATES_BASE64 must be a JSON string array");
+  }
+  const appAppleId = Number(requiredEnv(env.APPLE_APP_ID, "APPLE_APP_ID"));
+  if (!Number.isSafeInteger(appAppleId) || appAppleId <= 0) {
+    throw new Error("APPLE_APP_ID must be a positive integer");
+  }
+  const verifier = new OfficialAppleBillingVerifier({
+    rootCertificatesBase64,
+    bundleId: env.APNS_BUNDLE_ID ?? "app.bellwire",
+    appAppleId,
+  });
+  return new AppleBillingService(repository, verifier, undefined, analytics);
+}
+
+function createProductAnalytics(env: Env): ProductAnalytics | undefined {
+  const key = env.POSTHOG_PROJECT_KEY?.trim();
+  if (!key) return undefined;
+  return new PostHogProductAnalytics(key, env.POSTHOG_HOST);
 }

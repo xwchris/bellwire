@@ -7,7 +7,9 @@ does not use Bellwire Cloud, its Apple signing identity, or its APNs credentials
 
 - An Apple Developer Program team with Push Notifications and Sign in with
   Apple enabled for your own explicit App ID.
-- A second App ID for the notification service extension.
+- Two extension App IDs: one for the notification service and one for Widgets
+  and Live Activities.
+- An App Group shared by the main app and Widget extension.
 - An APNs token signing key (`.p8`), Key ID, and Team ID.
 - A Supabase project for authentication and PostgreSQL storage.
 - A Cloudflare account with Workers and Queues.
@@ -27,13 +29,17 @@ In Certificates, Identifiers & Profiles:
    new independent app, configure it as the primary Sign in with Apple App ID.
 3. Register a second explicit App ID for the notification extension, for
    example `com.example.bellwire.NotificationService`.
-4. [Create an APNs authentication key](https://developer.apple.com/help/account/keys/create-a-private-key),
+4. Register a third explicit App ID for the Widget and Live Activity extension,
+   for example `com.example.bellwire.Widgets`.
+5. Register an App Group such as `group.com.example.bellwire.shared`, then
+   enable it for the main App ID and Widget extension App ID.
+6. [Create an APNs authentication key](https://developer.apple.com/help/account/keys/create-a-private-key),
    record its Key ID, and download its `.p8` file. Apple only offers the private
    key download once, so store it securely and never add it to Git.
 
-The repository already declares the app-side Push Notifications and Sign in
-with Apple entitlements. Xcode will still need permission to create matching
-provisioning profiles for both identifiers.
+The repository already declares the app-side Push Notifications, Sign in with
+Apple, Widget, Live Activity, and App Group entitlements. Xcode will still need
+permission to create matching provisioning profiles for all three identifiers.
 
 ## 2. Prepare Supabase
 
@@ -81,6 +87,8 @@ The generated iOS configuration contains:
 - `BELLWIRE_DEVELOPMENT_TEAM`: your Apple Team ID.
 - `BELLWIRE_APP_BUNDLE_ID`: your explicit main App ID.
 - `BELLWIRE_EXTENSION_BUNDLE_ID`: the notification service extension App ID.
+- `BELLWIRE_WIDGET_BUNDLE_ID`: the Widget and Live Activity extension App ID.
+- `BELLWIRE_APP_GROUP`: the App Group shared by the main app and Widget.
 - `BELLWIRE_URL_SCHEME`: a URL scheme unique to your build.
 - `BELLWIRE_API_BASE_URL`: your deployed Worker URL.
 - `BELLWIRE_SUPABASE_URL`: your Supabase project URL.
@@ -93,7 +101,7 @@ values in the `https:/$()/host` form shown in the example. The empty
 build-setting expression prevents xcconfig from parsing `//` as a comment.
 
 Open `ios/Bellwire/Bellwire.xcodeproj` after configuring the identifiers. Xcode
-must be able to create provisioning profiles for both targets. A Simulator
+must be able to create provisioning profiles for all targets. A Simulator
 build verifies compilation, but a signed physical-device build is required to
 obtain a real APNs device token.
 
@@ -177,9 +185,14 @@ Finally, verify the physical-device path:
 2. Sign in with Apple and allow notifications.
 3. Confirm the device appears in Settings.
 4. Generate a binding code and bind the Bellwire Skill.
-5. Create a project, schema, notification surface, and ingest token.
-6. Send a test Event and inspect its Delivery status.
-7. Treat `accepted_by_apns` as provider acceptance; separately confirm that the
+5. Create a Private project and complete a Direct v2 connection, then send a
+   content-free test wake and verify on-device enrichment.
+6. Create an explicitly approved Hosted project, schema, notification Surface,
+   and ingest token.
+7. Send a test Hosted Event and inspect its Delivery status.
+8. On Pro, add the Bellwire Widget and start a Surface Live Activity from the
+   project detail screen.
+9. Treat `accepted_by_apns` as provider acceptance; separately confirm that the
    notification appeared on the device.
 
 The configuration generator and doctor remove the need to edit Swift or

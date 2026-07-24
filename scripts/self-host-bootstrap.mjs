@@ -27,6 +27,8 @@ Usage:
 
 Optional:
   --extension-bundle-id <id>       Defaults to <bundle-id>.NotificationService
+  --widget-bundle-id <id>          Defaults to <bundle-id>.Widgets
+  --app-group <id>                 Defaults to group.<bundle-id>.shared
   --url-scheme <scheme>            Defaults to the lowercased bundle ID
   --worker-name <name>             Defaults to bellwire-self-host
   --queue-prefix <name>            Defaults to the Worker name
@@ -40,6 +42,8 @@ const allowedOptions = new Set([
   "team-id",
   "bundle-id",
   "extension-bundle-id",
+  "widget-bundle-id",
+  "app-group",
   "url-scheme",
   "worker-name",
   "queue-prefix",

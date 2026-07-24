@@ -10,6 +10,10 @@ SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
 APNS_BUNDLE_ID = "com.example.bellwire"
 APP_URL_SCHEME = "bellwire-self-host"
 APNS_ENVIRONMENT = "production"
+ENTITLEMENT_ENFORCEMENT_MODE = "disabled"
+
+[triggers]
+crons = ["17 * * * *"]
 
 [[queues.producers]]
 binding = "DELIVERY_QUEUE"

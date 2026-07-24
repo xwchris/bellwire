@@ -10,7 +10,7 @@ struct KeychainStore {
     private let legacyDirectKeyIDAccount = "direct-key-id-v1"
     private let legacyDirectAgreementKeyAccount = "direct-agreement-private-v1"
     private let legacyDirectSigningKeyAccount = "direct-signing-private-v1"
-    private let sharedDirectContextAccount = "notification-context-v1"
+    private let sharedDirectContextAccount = "notification-context-v2"
 
     func save(_ session: AuthSession) throws {
         let data = try JSONEncoder().encode(session)
@@ -121,12 +121,15 @@ struct KeychainStore {
     ) throws {
         try saveDirectData(
             JSONEncoder().encode(manifests),
-            account: "direct-connections-\(userID)"
+            account: "direct-connections-v2-\(userID)"
         )
+        deleteDirectData(account: "direct-connections-\(userID)")
     }
 
     func directConnectionManifests(userID: String) -> [DirectConnectionManifest] {
-        guard let data = readDirectData(account: "direct-connections-\(userID)") else { return [] }
+        guard let data = readDirectData(account: "direct-connections-v2-\(userID)") else {
+            return []
+        }
         return (try? JSONDecoder().decode([DirectConnectionManifest].self, from: data)) ?? []
     }
 
@@ -141,6 +144,7 @@ struct KeychainStore {
     }
 
     func deleteDirectData(userID: String) {
+        deleteDirectData(account: "direct-connections-v2-\(userID)")
         deleteDirectData(account: "direct-connections-\(userID)")
         deleteDirectData(account: directAccount("key-id", userID: userID))
         deleteDirectData(account: directAccount("agreement-private", userID: userID))
@@ -307,7 +311,7 @@ struct DeviceIdentity {
         let key = secret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data(id.utf8),
-            sharedInfo: Data("bellwire-direct-connection-v1".utf8),
+            sharedInfo: Data("bellwire-direct-connection-v2".utf8),
             outputByteCount: 32
         )
         return try AES.GCM.open(AES.GCM.SealedBox(combined: sealedData), using: key)

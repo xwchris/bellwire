@@ -1,6 +1,7 @@
 name = "bellwire-api"
 main = "src/index.ts"
 compatibility_date = "2026-07-20"
+compatibility_flags = ["nodejs_compat"]
 routes = [{ pattern = "api.bellwire.app", custom_domain = true }]
 workers_dev = false
 preview_urls = false
@@ -11,6 +12,8 @@ SUPABASE_URL = "https://cvyidqbjjkfzoxykkbea.supabase.co"
 APNS_BUNDLE_ID = "app.bellwire"
 APP_URL_SCHEME = "bellwire"
 APNS_ENVIRONMENT = "production"
+ENTITLEMENT_ENFORCEMENT_MODE = "shadow"
+POSTHOG_HOST = "https://us.i.posthog.com"
 
 [[queues.producers]]
 binding = "DELIVERY_QUEUE"
@@ -22,3 +25,6 @@ max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 3
 dead_letter_queue = "bellwire-deliveries-dlq"
+
+[triggers]
+crons = ["17 * * * *"]

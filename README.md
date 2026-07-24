@@ -17,10 +17,12 @@
   </p>
 </div>
 
-Bellwire turns live project state and typed events into native iPhone cards, a
-private inbox, and APNs notifications. It includes a Cloudflare Worker API,
-durable Supabase storage and authentication, a native SwiftUI app, and an
-installable Agent Skill for connecting other repositories.
+Bellwire turns live project state and typed events into native iPhone cards, an
+inbox, and APNs notifications. New projects use **Private** delivery by default:
+Bellwire relays a content-free wake, while the iPhone fetches notification,
+Inbox, and Surface details directly from your signed HTTPS service. **Hosted**
+delivery is an explicit, user-approved option for projects that prefer Bellwire
+Cloud to store and render those details.
 
 Use [Bellwire Cloud](https://bellwire.app) or connect a self-hosted deployment.
 The hosted API is available at
@@ -34,7 +36,7 @@ out of this public repository.
 > and public docs use Apache-2.0. The Bellwire brand is reserved. See
 > [LICENSE.md](LICENSE.md) for the exact path boundaries.
 
-Start with the [five-minute hosted quick start](docs/quickstart.md), browse the
+Start with the [Private-first quick start](docs/quickstart.md), browse the
 [integration examples](examples/README.md), or deploy the full stack with the
 [self-hosting guide](docs/self-hosting.md).
 
@@ -55,11 +57,13 @@ Start with the [five-minute hosted quick start](docs/quickstart.md), browse the
 | Auth and database | Operated by Bellwire | Your Supabase project |
 | Push credentials | Bellwire App ID and APNs key | Your App ID and APNs key |
 | Source code edits | None | None; use ignored local configuration |
+| Private data path | Content-free wake; phone reads your service directly | Same protocol on your infrastructure |
+| Commercial limits | Free or Pro plan | None |
 | Operations | Managed service | You own upgrades, cost, security, and uptime |
 
-Both paths use the same Event, Surface, Agent, and delivery contracts. Bellwire
-Cloud is the convenience product; self-hosting is the control and auditability
-path.
+Private and Hosted are project data paths, independent from hosted versus
+self-hosted deployment. Self-hosted builds use the same protocol without
+commercial project, device, or Signal limits.
 
 ## Install the Agent Skill
 
@@ -81,7 +85,7 @@ Restart Codex, create a binding code in the iOS app, and ask Codex to use the
 Bellwire Skill for the current repository. See the
 [ClawHub listing](https://clawhub.ai/xwchris/skills/bellwire),
 [Skill installation guide](skills/bellwire/README.md), and
-[hosted quick start](docs/quickstart.md) for the complete flow.
+[Private-first quick start](docs/quickstart.md) for the complete flow.
 
 ## What is implemented
 
@@ -93,29 +97,39 @@ Bellwire Skill for the current repository. See the
   for scoped Agent tokens.
 - Typed event validation, sensitive-field protection, idempotent ingestion,
   project pause controls, and retry-aware delivery health.
+- Project-level Private/Hosted isolation, signed Direct v2 endpoints, encrypted
+  one-time manifests, opaque wake references, and device readiness.
+- Server-authoritative Free/Pro entitlements, atomic monthly Signal metering,
+  StoreKit 2 transaction verification, App Store Server Notifications V2, and
+  entitlement-based retention.
 - Cloudflare Queue dispatch and APNs HTTP/2 provider-token authentication.
 - Optional public HTTPS project logos in native project avatars and rich APNs
   notification attachments, with monogram fallback when an image is absent or fails.
 - Native iOS 17 SwiftUI inbox with Sign in with Apple, Keychain session
   storage, APNs registration, deep links, device management, and light/dark
   appearance.
+- Pro Home Screen Widgets and Surface Live Activities backed by an App Group,
+  with server-authoritative entitlement gating and automatic refresh.
 - A reusable skill in [`skills/bellwire`](skills/bellwire) with a
   dependency-free CLI and adapter references.
 
 ## Architecture
 
 ```text
-Project / Agent
-      │ live Surface update or typed Event
-      ▼
-Cloudflare Worker ──► Supabase (auth, config, inbox, delivery state)
-      │
-      └──► Cloudflare Queue ──► APNs ──► Bellwire iOS
+Private (default)
+User service ── opaque wake ──► Bellwire Queue/APNs ──► iPhone
+      ▲                                                     │
+      └──────── signed notification/Inbox/Surface fetch ────┘
+
+Hosted (user approved)
+Project / Agent ── Event or Surface ──► Bellwire/Supabase
+                                             │
+                                             └──► Queue/APNs ──► iPhone
 ```
 
-Events remain durable if Queue submission is temporarily unavailable. For a
-registered device, the API records `retryable:QueueUnavailable` as degraded
-delivery health instead of returning a misleading storage failure.
+Accepted Signals remain durable if Queue submission is temporarily unavailable.
+Private references are cleared after delivery settles and expire within 24
+hours; content-free wake metadata expires after seven days.
 
 Architecture decisions are recorded in [`docs/architecture`](docs/architecture).
 Release history is recorded in [`CHANGELOG.md`](CHANGELOG.md).
@@ -187,6 +201,8 @@ Rich project-logo notifications also embed the
 `app.bellwire.NotificationService` extension; its App ID and provisioning
 profile must exist for signed device builds. iOS keeps the Bellwire app icon in
 the collapsed notification and shows the project logo as a rich attachment.
+Widget and Live Activity support additionally uses `app.bellwire.Widgets` and
+the `group.app.bellwire.shared` App Group.
 
 An unsigned Simulator build is reproducible with `npm run ios:build`. A signed
 device build additionally requires an Apple Developer account in Xcode, an App
@@ -201,7 +217,8 @@ is required.
 ## API surface
 
 All management routes require a Supabase user JWT or scoped Agent token.
-Ingestion uses a project-scoped Ingest token.
+Private runtime uses a project-scoped wake token; Hosted ingestion uses a
+project-scoped Ingest token.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -212,10 +229,17 @@ Ingestion uses a project-scoped Ingest token.
 | `DELETE` | `/v1/devices/:deviceId` | Remove an owned device |
 | `GET, POST` | `/v1/projects` | List or create projects |
 | `GET, PATCH, DELETE` | `/v1/projects/:projectId` | Inspect, update, or permanently delete a project |
+| `POST` | `/v1/projects/:projectId/delivery-mode-requests` | Request a user-approved Private/Hosted switch |
+| `GET, POST` | `/v1/direct-connections` | Publish or fetch encrypted Direct v2 manifests |
+| `POST` | `/v1/direct-connections/:envelopeId/ack` | Verify readiness and atomically consume a manifest |
+| `POST` | `/v1/projects/:projectId/wake-tokens` | Issue a Private wake-only token |
+| `DELETE` | `/v1/projects/:projectId/wake-tokens/:tokenId` | Revoke a Private wake token |
+| `POST` | `/v1/projects/:projectId/private-wakes` | Accept an opaque, content-free Private wake |
 | `POST` | `/v1/projects/:projectId/event-schemas` | Create a versioned Event Schema |
 | `POST` | `/v1/projects/:projectId/notification-surfaces` | Create a notification Surface |
 | `GET` | `/v1/surfaces` | List current live Surfaces across projects |
 | `GET` | `/v1/projects/:projectId/surfaces` | List current project Surfaces |
+| `GET` | `/v1/projects/:projectId/export` | Export Hosted Event and delivery history (Pro) |
 | `PUT, DELETE` | `/v1/projects/:projectId/surfaces/:surfaceKey` | Update or end a stable live Surface |
 | `POST` | `/v1/projects/:projectId/ingest-tokens` | Issue an Ingest token |
 | `DELETE` | `/v1/projects/:projectId/ingest-tokens/:tokenId` | Revoke an Ingest token |
@@ -228,13 +252,16 @@ Ingestion uses a project-scoped Ingest token.
 | `POST` | `/v1/events/:eventId/read` | Mark an event read |
 | `GET` | `/v1/events/:eventId/deliveries` | Inspect APNs attempts |
 | `GET` | `/v1/projects/:projectId/delivery-health` | Aggregate delivery health |
+| `GET` | `/v1/account/entitlement` | Read authoritative plan limits and monthly Signal usage |
+| `POST` | `/v1/billing/apple/transactions` | Verify and synchronize a StoreKit transaction |
+| `POST` | `/v1/billing/apple/notifications` | Receive App Store Server Notifications V2 |
 
 Schema fields support `string`, `number`, `boolean`, `datetime`, `url`, and
 `enum`. Each field may set `required` and `sensitive`; enum fields require a
 non-empty string `values` array. Sensitive fields may appear in authenticated
 detail views but are rejected from notification templates.
 
-Event ingestion requires `Authorization: Bearer <ingest-token>` and a stable
+Hosted Event ingestion requires `Authorization: Bearer <ingest-token>` and a stable
 `Idempotency-Key` header:
 
 ```json
@@ -251,6 +278,11 @@ Event ingestion requires `Authorization: Bearer <ingest-token>` and a stable
 
 A new event returns `201`; replaying the same project and key returns `200`
 with the original Event ID and `"deduplicated": true`.
+
+Private wake ingestion accepts only a 22–200 character random URL-safe
+`reference` and optional `priority`. It rejects unknown fields and never accepts
+title, body, Event data, project name, Logo URL, or service hostname. See the
+[Direct v2 protocol](skills/bellwire/references/direct-connections.md).
 
 ## Live smoke test
 

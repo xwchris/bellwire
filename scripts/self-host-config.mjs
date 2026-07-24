@@ -64,11 +64,21 @@ export function validateBootstrapOptions(options) {
   if (!validBundleId(extensionBundleId)) {
     throw new Error("--extension-bundle-id is not a valid explicit App ID");
   }
+  const widgetBundleId = options["widget-bundle-id"] ?? `${bundleId}.Widgets`;
+  if (!validBundleId(widgetBundleId)) {
+    throw new Error("--widget-bundle-id is not a valid explicit App ID");
+  }
+  const appGroup = options["app-group"] ?? `group.${bundleId}.shared`;
+  if (!appGroup.startsWith("group.") || !validBundleId(appGroup)) {
+    throw new Error("--app-group must be a valid application group identifier");
+  }
 
   return {
     teamId,
     bundleId,
     extensionBundleId,
+    widgetBundleId,
+    appGroup,
     apiURL,
     supabaseURL,
     publishableKey,
@@ -85,6 +95,8 @@ export function renderLocalXcconfig(configuration) {
 BELLWIRE_DEVELOPMENT_TEAM = ${configuration.teamId}
 BELLWIRE_APP_BUNDLE_ID = ${configuration.bundleId}
 BELLWIRE_EXTENSION_BUNDLE_ID = ${configuration.extensionBundleId}
+BELLWIRE_WIDGET_BUNDLE_ID = ${configuration.widgetBundleId}
+BELLWIRE_APP_GROUP = ${configuration.appGroup}
 BELLWIRE_URL_SCHEME = ${configuration.urlScheme}
 
 // The empty $() keeps // from being parsed as an xcconfig comment.
@@ -108,6 +120,10 @@ SUPABASE_URL = ${JSON.stringify(configuration.supabaseURL)}
 APNS_BUNDLE_ID = ${JSON.stringify(configuration.bundleId)}
 APP_URL_SCHEME = ${JSON.stringify(configuration.urlScheme)}
 APNS_ENVIRONMENT = ${JSON.stringify(configuration.apnsEnvironment)}
+ENTITLEMENT_ENFORCEMENT_MODE = "disabled"
+
+[triggers]
+crons = ["17 * * * *"]
 
 [[queues.producers]]
 binding = "DELIVERY_QUEUE"

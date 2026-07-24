@@ -1,4 +1,4 @@
-# Bellwire Cloud quick start
+# Bellwire Private-first quick start
 
 This path uses the official Bellwire API and an already installed official iOS
 build. It does not require a Cloudflare, Supabase, or Apple Developer account.
@@ -34,7 +34,7 @@ demo project rather than creating duplicates.
    export BELLWIRE_AGENT_TOKEN='bw_agent_REPLACE_ME'
    ```
 
-4. Confirm the connection and create a real project:
+4. Confirm the connection and create a real project. New projects are Private:
 
    ```bash
    node skills/bellwire/scripts/bellwire.mjs list-projects
@@ -44,9 +44,25 @@ demo project rather than creating duplicates.
      --json
    ```
 
-The Agent token manages projects and configuration. Production integrations
-should create and use the narrower project-scoped Ingest token. Continue with
-the [examples](../examples/README.md) for typed Event setup and runtime calls.
+The Agent token manages projects and configuration. For a production Private
+integration, the Agent must:
+
+1. implement signed Direct v2 notification, Inbox, and Surface endpoints in
+   your service;
+2. store device public keys, atomically consumed nonces, and short-lived opaque
+   references in your database;
+3. publish one encrypted manifest per iPhone and wait for readiness;
+4. create a wake-only token and store it in your service's secret manager;
+5. send an opaque wake only after the business transaction and outbox record
+   commit;
+6. run the Direct conformance checker and one real end-to-end operation.
+
+Continue with the [Private examples](../examples/README.md) and
+[Direct v2 reference](../skills/bellwire/references/direct-connections.md).
+
+If you explicitly want Bellwire Cloud to store Event, Inbox, Surface, and
+detailed notification content, ask the Agent to request Hosted mode. Approve
+the request in the iOS app before creating an Ingest token.
 
 ## Self-hosted API
 

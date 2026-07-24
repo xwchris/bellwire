@@ -45,10 +45,14 @@ export interface Project {
   displayOrder: number;
   category: string;
   status: "active" | "paused";
+  deliveryMode: ProjectDeliveryMode;
   endpoint: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export const PROJECT_DELIVERY_MODES = ["private", "hosted"] as const;
+export type ProjectDeliveryMode = (typeof PROJECT_DELIVERY_MODES)[number];
 
 export interface Device {
   id: string;
@@ -62,20 +66,6 @@ export interface Device {
   lastActiveAt: string;
   pushEnabled: boolean;
   createdAt: string;
-}
-
-export const NOTIFICATION_PRIVACY_MODES = [
-  "generic",
-  "local_enrichment",
-  "hosted_detailed",
-] as const;
-
-export type NotificationPrivacyMode = (typeof NOTIFICATION_PRIVACY_MODES)[number];
-
-export interface NotificationPreference {
-  userId: string;
-  mode: NotificationPrivacyMode;
-  updatedAt: string;
 }
 
 export interface DeviceBinding {
@@ -125,11 +115,37 @@ export interface DirectConnectionEnvelope {
   id: string;
   userId: string;
   deviceKeyId: string;
+  projectId: string;
+  manifestVersion: 2;
   algorithm: "p256-hkdf-sha256-aes-gcm";
   ephemeralPublicKey: string;
   sealedBox: string;
   createdAt: string;
   expiresAt: string;
+}
+
+export interface PrivateConnectionReadiness {
+  projectId: string;
+  deviceKeyId: string;
+  userId: string;
+  manifestVersion: 2;
+  readyAt: string;
+  lastVerifiedAt: string;
+  lastSyncAt?: string;
+  lastErrorCode?: string;
+}
+
+export interface DeliveryModeChangeRequest {
+  id: string;
+  projectId: string;
+  userId: string;
+  requestedByTokenId: string;
+  fromMode: ProjectDeliveryMode;
+  toMode: ProjectDeliveryMode;
+  status: "pending" | "approved" | "rejected" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt?: string;
 }
 
 export interface EventSchema {
@@ -202,17 +218,54 @@ export interface IngestToken {
   revokedAt?: string;
 }
 
+export interface PrivateWakeToken {
+  id: string;
+  projectId: string;
+  name: string;
+  tokenHash: string;
+  scope: "wake:send";
+  createdAt: string;
+  lastUsedAt?: string;
+  expiresAt?: string;
+  revokedAt?: string;
+}
+
 export interface BellwireEvent {
   id: string;
   projectId: string;
   eventType: string;
-  idempotencyKey: string;
+  idempotencyKeyHash: string;
   data: Record<string, unknown>;
   sensitiveFields?: string[];
   occurredAt: string;
   receivedAt: string;
   status: "accepted";
   readAt?: string;
+}
+
+export interface PrivateWake {
+  id: string;
+  projectId: string;
+  idempotencyKeyHash: string;
+  reference?: string;
+  priority: "normal" | "high";
+  receivedAt: string;
+  referenceExpiresAt: string;
+}
+
+export interface PrivateWakeDelivery {
+  id: string;
+  wakeId: string;
+  deviceId: string;
+  channel: "apns";
+  status: DeliveryStatus;
+  attemptCount: number;
+  providerMessageId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  queuedAt: string;
+  sentAt?: string;
+  updatedAt: string;
 }
 
 export type DeliveryStatus = "queued" | "accepted_by_apns" | "failed";
@@ -254,4 +307,74 @@ export interface DeliveryHealth {
 export interface ValidationIssue {
   field: string;
   message: string;
+}
+
+export type PlanId = "free" | "pro";
+export type EntitlementStatus = "active" | "grace" | "expired" | "revoked";
+
+export interface PlanLimits {
+  activeProjects: number;
+  activeDevices: number;
+  monthlySignals: number;
+  courtesySignals: number;
+  ingestPerMinute: number;
+  hostedRetentionDays: number;
+  surfacesPerProject: number;
+}
+
+export interface SignalUsage {
+  periodStart: string;
+  periodEnd: string;
+  acceptedSignals: number;
+  remainingSignals: number;
+  courtesyRemainingSignals: number;
+}
+
+export interface AccountEntitlement {
+  plan: PlanId;
+  status: EntitlementStatus;
+  productId?: string;
+  expiresAt?: string;
+  downgradeDeadline?: string;
+  limits: PlanLimits;
+  usage: SignalUsage;
+  activeProjects: number;
+  activeDevices: number;
+}
+
+export interface MeteredWrite {
+  created: boolean;
+  quotaExceeded: boolean;
+  plan: PlanId;
+  acceptedSignals: number;
+  signalLimit: number;
+  courtesyLimit: number;
+  resetAt: string;
+}
+
+export interface MeteredEventWrite extends MeteredWrite {
+  event?: BellwireEvent;
+}
+
+export interface MeteredPrivateWakeWrite extends MeteredWrite {
+  wake?: PrivateWake;
+}
+
+export interface MeteredLiveSurfaceWrite extends MeteredWrite {
+  surface?: LiveSurface;
+  surfaceLimitExceeded: boolean;
+}
+
+export interface AppleTransactionRecord {
+  transactionId: string;
+  originalTransactionId: string;
+  userId: string;
+  productId: string;
+  environment: "Sandbox" | "Production";
+  purchaseDate: string;
+  expiresAt?: string;
+  revocationDate?: string;
+  status: EntitlementStatus;
+  signedDate: string;
+  updatedAt: string;
 }

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
+  AccountEntitlement,
   BellwireEvent,
   AgentToken,
+  AppleTransactionRecord,
   Delivery,
+  DeliveryModeChangeRequest,
   DeliveryHealth,
   Device,
   DeviceBinding,
@@ -13,15 +16,21 @@ import type {
   EventSchema,
   IngestToken,
   LiveSurface,
-  NotificationPreference,
+  MeteredEventWrite,
+  MeteredLiveSurfaceWrite,
+  MeteredPrivateWakeWrite,
   NotificationSurface,
+  PrivateConnectionReadiness,
+  PrivateWake,
+  PrivateWakeDelivery,
+  PrivateWakeToken,
   Project,
 } from "../domain/models";
 import type {
   BellwireRepository,
   CreateDeliveryResult,
-  CreateEventResult,
 } from "./bellwire-repository";
+import { decodeEventCursor, encodeEventCursor } from "./event-cursor";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -171,30 +180,14 @@ export class SupabaseBellwireRepository implements BellwireRepository {
   }
 
   async deleteDevice(deviceId: string): Promise<void> {
+    const device = await this.getDevice(deviceId);
     await this.request(`/devices?${params({ id: `eq.${deviceId}` })}`, { method: "DELETE" });
-  }
-
-  async getNotificationPreference(userId: string): Promise<NotificationPreference | undefined> {
-    return this.one(
-      "/notification_preferences",
-      { user_id: `eq.${userId}` },
-      toNotificationPreference,
-    );
-  }
-
-  async saveNotificationPreference(
-    preference: NotificationPreference,
-  ): Promise<NotificationPreference> {
-    const rows = await this.request<JsonRecord[]>("/notification_preferences?on_conflict=user_id", {
-      method: "POST",
-      body: {
-        user_id: preference.userId,
-        mode: preference.mode,
-        updated_at: preference.updatedAt,
-      },
-      prefer: "resolution=merge-duplicates,return=representation",
-    });
-    return toNotificationPreference(requiredFirst(rows));
+    if (device) {
+      await this.request(`/device_keys?${params({
+        user_id: `eq.${device.userId}`,
+        installation_id: `eq.${device.installationId}`,
+      })}`, { method: "DELETE" });
+    }
   }
 
   async saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding> {
@@ -323,11 +316,87 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     return rows.map(toDirectConnectionEnvelope);
   }
 
-  async deleteDirectConnectionEnvelope(envelopeId: string, userId: string): Promise<void> {
-    await this.request(`/direct_connection_envelopes?${params({
-      id: `eq.${envelopeId}`,
+  async acknowledgeDirectConnectionEnvelope(
+    envelopeId: string,
+    userId: string,
+    deviceKeyId: string,
+    verifiedAt: string,
+  ): Promise<string | undefined> {
+    const projectId = await this.request<string | null>(
+      "/rpc/ack_direct_connection_envelope",
+      {
+        method: "POST",
+        body: {
+          p_envelope_id: envelopeId,
+          p_user_id: userId,
+          p_device_key_id: deviceKeyId,
+          p_verified_at: verifiedAt,
+        },
+      },
+    );
+    return projectId ?? undefined;
+  }
+
+  async getPrivateConnectionReadiness(
+    projectId: string,
+    deviceKeyId: string,
+  ): Promise<PrivateConnectionReadiness | undefined> {
+    return this.one(
+      "/private_connection_readiness",
+      { project_id: `eq.${projectId}`, device_key_id: `eq.${deviceKeyId}` },
+      toPrivateConnectionReadiness,
+    );
+  }
+
+  async listPrivateConnectionReadiness(
+    projectId: string,
+  ): Promise<PrivateConnectionReadiness[]> {
+    const rows = await this.getRows("/private_connection_readiness", {
+      project_id: `eq.${projectId}`,
+      order: "ready_at.asc",
+    });
+    return rows.map(toPrivateConnectionReadiness);
+  }
+
+  async saveDeliveryModeChangeRequest(
+    request: DeliveryModeChangeRequest,
+  ): Promise<DeliveryModeChangeRequest> {
+    const rows = await this.request<JsonRecord[]>("/delivery_mode_change_requests", {
+      method: "POST",
+      body: deliveryModeChangeRequestRow(request),
+      prefer: "return=representation",
+    });
+    return toDeliveryModeChangeRequest(requiredFirst(rows));
+  }
+
+  async listDeliveryModeChangeRequests(
+    userId: string,
+    status?: DeliveryModeChangeRequest["status"],
+  ): Promise<DeliveryModeChangeRequest[]> {
+    const rows = await this.getRows("/delivery_mode_change_requests", {
       user_id: `eq.${userId}`,
-    })}`, { method: "DELETE" });
+      ...(status ? { status: `eq.${status}` } : {}),
+      order: "created_at.desc",
+    });
+    return rows.map(toDeliveryModeChangeRequest);
+  }
+
+  async resolveDeliveryModeChangeRequest(
+    requestId: string,
+    userId: string,
+    approved: boolean,
+    resolvedAt: string,
+  ): Promise<DeliveryModeChangeRequest | undefined> {
+    const rows = await this.request<JsonRecord[]>("/rpc/resolve_delivery_mode_request", {
+      method: "POST",
+      body: {
+        p_request_id: requestId,
+        p_user_id: userId,
+        p_approved: approved,
+        p_resolved_at: resolvedAt,
+      },
+    });
+    return rows[0] ? toDeliveryModeChangeRequest(rows[0]) : undefined;
   }
 
   async saveEventSchema(schema: EventSchema): Promise<EventSchema> {
@@ -429,6 +498,30 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     return toLiveSurface(requiredFirst(rows));
   }
 
+  async acceptHostedSurface(
+    surface: LiveSurface,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredLiveSurfaceWrite> {
+    const rows = await this.request<JsonRecord[]>("/rpc/accept_hosted_surface_signal", {
+      method: "POST",
+      body: {
+        p_id: surface.id,
+        p_project_id: surface.projectId,
+        p_surface_key: surface.surfaceKey,
+        p_type: surface.type,
+        p_title: surface.title,
+        p_subtitle: surface.subtitle ?? null,
+        p_content: surface.content,
+        p_action: surface.action ?? null,
+        p_display_order: surface.displayOrder,
+        p_created_at: surface.createdAt,
+        p_updated_at: surface.updatedAt,
+        p_enforcement_mode: enforcementMode,
+      },
+    });
+    return toMeteredLiveSurfaceWrite(requiredFirst(rows));
+  }
+
   async getLiveSurface(projectId: string, surfaceKey: string): Promise<LiveSurface | undefined> {
     return this.one(
       "/live_surfaces",
@@ -504,6 +597,53 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     });
   }
 
+  async savePrivateWakeToken(token: PrivateWakeToken): Promise<PrivateWakeToken> {
+    const rows = await this.request<JsonRecord[]>("/private_wake_tokens", {
+      method: "POST",
+      body: privateWakeTokenRow(token),
+      prefer: "return=representation",
+    });
+    return toPrivateWakeToken(requiredFirst(rows));
+  }
+
+  async listPrivateWakeTokens(projectId: string): Promise<PrivateWakeToken[]> {
+    const rows = await this.getRows("/private_wake_tokens", {
+      project_id: `eq.${projectId}`,
+      order: "created_at.desc",
+    });
+    return rows.map(toPrivateWakeToken);
+  }
+
+  async findPrivateWakeTokenByHash(
+    projectId: string,
+    tokenHash: string,
+  ): Promise<PrivateWakeToken | undefined> {
+    return this.one(
+      "/private_wake_tokens",
+      {
+        project_id: `eq.${projectId}`,
+        token_hash: `eq.${tokenHash}`,
+        revoked_at: "is.null",
+        or: `(expires_at.is.null,expires_at.gt.${new Date().toISOString()})`,
+      },
+      toPrivateWakeToken,
+    );
+  }
+
+  async markPrivateWakeTokenUsed(tokenId: string, usedAt: string): Promise<void> {
+    await this.request(`/private_wake_tokens?${params({ id: `eq.${tokenId}` })}`, {
+      method: "PATCH",
+      body: { last_used_at: usedAt },
+    });
+  }
+
+  async revokePrivateWakeToken(tokenId: string, revokedAt: string): Promise<void> {
+    await this.request(`/private_wake_tokens?${params({ id: `eq.${tokenId}` })}`, {
+      method: "PATCH",
+      body: { revoked_at: revokedAt },
+    });
+  }
+
   async consumeRateLimit(key: string, limit: number, windowSeconds: number): Promise<boolean> {
     return this.request<boolean>("/rpc/consume_ingest_quota", {
       method: "POST",
@@ -511,35 +651,68 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     });
   }
 
-  async createEventIfAbsent(event: BellwireEvent): Promise<CreateEventResult> {
-    const inserted = await this.request<JsonRecord[]>(
-      "/events?on_conflict=project_id,idempotency_key",
-      {
-        method: "POST",
-        body: eventRow(event),
-        prefer: "resolution=ignore-duplicates,return=representation",
+  async acceptHostedEvent(
+    event: BellwireEvent,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredEventWrite> {
+    const rows = await this.request<JsonRecord[]>("/rpc/accept_hosted_event_signal", {
+      method: "POST",
+      body: {
+        p_id: event.id,
+        p_project_id: event.projectId,
+        p_event_type: event.eventType,
+        p_idempotency_key_hash: event.idempotencyKeyHash,
+        p_data: event.data,
+        p_sensitive_fields: event.sensitiveFields ?? Object.keys(event.data),
+        p_occurred_at: event.occurredAt,
+        p_received_at: event.receivedAt,
+        p_enforcement_mode: enforcementMode,
       },
-    );
-    if (inserted[0]) return { event: toEvent(inserted[0]), created: true };
-    const existing = await this.one(
-      "/events",
-      {
-        project_id: `eq.${event.projectId}`,
-        idempotency_key: `eq.${event.idempotencyKey}`,
+    });
+    return toMeteredEventWrite(requiredFirst(rows));
+  }
+
+  async acceptPrivateWake(
+    wake: PrivateWake,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredPrivateWakeWrite> {
+    const rows = await this.request<JsonRecord[]>("/rpc/accept_private_wake_signal", {
+      method: "POST",
+      body: {
+        p_id: wake.id,
+        p_project_id: wake.projectId,
+        p_idempotency_key_hash: wake.idempotencyKeyHash,
+        p_reference: wake.reference ?? null,
+        p_priority: wake.priority,
+        p_received_at: wake.receivedAt,
+        p_reference_expires_at: wake.referenceExpiresAt,
+        p_enforcement_mode: enforcementMode,
       },
-      toEvent,
-    );
-    if (!existing) throw new Error("Event idempotency conflict could not be resolved");
-    return { event: existing, created: false };
+    });
+    return toMeteredPrivateWakeWrite(requiredFirst(rows));
+  }
+
+  async getPrivateWake(wakeId: string): Promise<PrivateWake | undefined> {
+    return this.one("/private_wakes", { id: `eq.${wakeId}` }, toPrivateWake);
+  }
+
+  async clearPrivateWakeReference(wakeId: string): Promise<void> {
+    await this.request(`/private_wakes?${params({ id: `eq.${wakeId}` })}`, {
+      method: "PATCH",
+      body: { reference: null },
+    });
   }
 
   async listEvents(projectId: string, options: EventListOptions): Promise<EventListPage> {
     const query: Record<string, string> = {
       project_id: `eq.${projectId}`,
-      order: "received_at.desc",
+      order: "received_at.desc,id.desc",
       limit: String(options.limit + 1),
     };
-    if (options.cursor) query.received_at = `lt.${options.cursor}`;
+    if (options.cursor) {
+      const cursor = decodeEventCursor(options.cursor);
+      query.or = `(received_at.lt.${cursor.receivedAt},and(received_at.eq.${cursor.receivedAt},id.lt.${cursor.id}))`;
+    }
     if (options.eventType) query.event_type = `eq.${options.eventType}`;
     if (options.unreadOnly) query.read_at = "is.null";
     const rows = await this.getRows("/events", query);
@@ -547,7 +720,12 @@ export class SupabaseBellwireRepository implements BellwireRepository {
     const events = rows.slice(0, options.limit).map(toEvent);
     return {
       events,
-      ...(hasMore && events.at(-1) ? { nextCursor: events.at(-1)?.receivedAt } : {}),
+      ...(hasMore && events.at(-1) ? {
+        nextCursor: encodeEventCursor({
+          receivedAt: events.at(-1)!.receivedAt,
+          id: events.at(-1)!.id,
+        }),
+      } : {}),
     };
   }
 
@@ -660,11 +838,18 @@ export class SupabaseBellwireRepository implements BellwireRepository {
   }
 
   async getDeliveryHealth(projectId: string, since: string): Promise<DeliveryHealth> {
-    const rows = await this.getRows("/deliveries", {
-      select: "status,events!inner(project_id)",
-      "events.project_id": `eq.${projectId}`,
-      updated_at: `gte.${since}`,
-    });
+    const project = await this.getProject(projectId);
+    const rows = project?.deliveryMode === "private"
+      ? await this.getRows("/private_wake_deliveries", {
+          select: "status,private_wakes!inner(project_id)",
+          "private_wakes.project_id": `eq.${projectId}`,
+          updated_at: `gte.${since}`,
+        })
+      : await this.getRows("/deliveries", {
+          select: "status,events!inner(project_id)",
+          "events.project_id": `eq.${projectId}`,
+          updated_at: `gte.${since}`,
+        });
     const statuses = rows.map((row) => String(row.status));
     const queued = statuses.filter((status) => status === "queued").length;
     const accepted = statuses.filter((status) => status === "accepted_by_apns").length;
@@ -675,6 +860,141 @@ export class SupabaseBellwireRepository implements BellwireRepository {
       failed,
       status: statuses.length === 0 ? "idle" : failed > 0 ? "degraded" : "healthy",
     };
+  }
+
+  async createPrivateWakeDeliveryIfAbsent(
+    delivery: PrivateWakeDelivery,
+  ): Promise<{ delivery: PrivateWakeDelivery; created: boolean }> {
+    const rows = await this.request<JsonRecord[]>(
+      "/private_wake_deliveries?on_conflict=wake_id,device_id",
+      {
+        method: "POST",
+        body: privateWakeDeliveryRow(delivery),
+        prefer: "resolution=ignore-duplicates,return=representation",
+      },
+    );
+    if (rows[0]) return { delivery: toPrivateWakeDelivery(rows[0]), created: true };
+    const existing = await this.one(
+      "/private_wake_deliveries",
+      { wake_id: `eq.${delivery.wakeId}`, device_id: `eq.${delivery.deviceId}` },
+      toPrivateWakeDelivery,
+    );
+    if (!existing) throw new Error("Private wake delivery conflict could not be resolved");
+    return { delivery: existing, created: false };
+  }
+
+  async listPrivateWakeDeliveries(wakeId: string): Promise<PrivateWakeDelivery[]> {
+    const rows = await this.getRows("/private_wake_deliveries", {
+      wake_id: `eq.${wakeId}`,
+      order: "queued_at.asc",
+    });
+    return rows.map(toPrivateWakeDelivery);
+  }
+
+  async claimPrivateWakeDelivery(
+    deliveryId: string,
+    claimedAt: string,
+    leaseSeconds: number,
+    maxAttempts: number,
+  ): Promise<PrivateWakeDelivery | undefined> {
+    const rows = await this.request<JsonRecord[]>("/rpc/claim_private_wake_delivery", {
+      method: "POST",
+      body: {
+        p_delivery_id: deliveryId,
+        p_claimed_at: claimedAt,
+        p_lease_seconds: leaseSeconds,
+        p_max_attempts: maxAttempts,
+      },
+    });
+    return rows[0] ? toPrivateWakeDelivery(rows[0]) : undefined;
+  }
+
+  async completeClaimedPrivateWakeDelivery(
+    delivery: PrivateWakeDelivery,
+  ): Promise<PrivateWakeDelivery | undefined> {
+    const rows = await this.request<JsonRecord[]>(
+      `/private_wake_deliveries?${params({
+        id: `eq.${delivery.id}`,
+        status: "eq.queued",
+        attempt_count: `eq.${delivery.attemptCount}`,
+      })}`,
+      {
+        method: "PATCH",
+        body: privateWakeDeliveryRow(delivery),
+        prefer: "return=representation",
+      },
+    );
+    return rows[0] ? toPrivateWakeDelivery(rows[0]) : undefined;
+  }
+
+  async updatePrivateWakeDelivery(
+    delivery: PrivateWakeDelivery,
+  ): Promise<PrivateWakeDelivery> {
+    const rows = await this.request<JsonRecord[]>(
+      `/private_wake_deliveries?${params({ id: `eq.${delivery.id}` })}`,
+      {
+        method: "PATCH",
+        body: privateWakeDeliveryRow(delivery),
+        prefer: "return=representation",
+      },
+    );
+    return toPrivateWakeDelivery(requiredFirst(rows));
+  }
+
+  async getAccountEntitlement(userId: string, now: string): Promise<AccountEntitlement> {
+    const rows = await this.request<JsonRecord[]>("/rpc/account_entitlement_snapshot", {
+      method: "POST",
+      body: { p_user_id: userId, p_now: now },
+    });
+    return toAccountEntitlement(requiredFirst(rows));
+  }
+
+  async saveAppleTransaction(transaction: AppleTransactionRecord): Promise<void> {
+    await this.request("/rpc/record_verified_apple_transaction", {
+      method: "POST",
+      body: {
+        p_transaction_id: transaction.transactionId,
+        p_original_transaction_id: transaction.originalTransactionId,
+        p_user_id: transaction.userId,
+        p_product_id: transaction.productId,
+        p_environment: transaction.environment,
+        p_purchase_date: transaction.purchaseDate,
+        p_expires_at: transaction.expiresAt ?? null,
+        p_revocation_date: transaction.revocationDate ?? null,
+        p_status: transaction.status,
+        p_signed_date: transaction.signedDate,
+        p_updated_at: transaction.updatedAt,
+      },
+    });
+  }
+
+  async saveAppleNotificationReceipt(
+    notificationUUID: string,
+    notificationType: string,
+    subtype: string | undefined,
+    signedDate: string,
+  ): Promise<boolean> {
+    const rows = await this.request<JsonRecord[]>(
+      "/apple_notification_receipts?on_conflict=notification_uuid",
+      {
+        method: "POST",
+        body: {
+          notification_uuid: notificationUUID,
+          notification_type: notificationType,
+          subtype: subtype ?? null,
+          signed_date: signedDate,
+        },
+        prefer: "resolution=ignore-duplicates,return=representation",
+      },
+    );
+    return rows.length > 0;
+  }
+
+  async runMaintenance(now: string): Promise<unknown> {
+    return this.request("/rpc/cleanup_bellwire_retention", {
+      method: "POST",
+      body: { p_now: now },
+    });
   }
 
   private async one<T>(
@@ -739,7 +1059,7 @@ function projectRow(value: Project): JsonRecord {
   return {
     id: value.id, user_id: value.userId, name: value.name, slug: value.slug,
     icon: value.icon, logo_url: value.logoUrl ?? null, display_order: value.displayOrder,
-    category: value.category, status: value.status,
+    category: value.category, status: value.status, delivery_mode: value.deliveryMode,
     endpoint: value.endpoint, created_at: value.createdAt, updated_at: value.updatedAt,
   };
 }
@@ -749,7 +1069,9 @@ function toProject(row: JsonRecord): Project {
     id: String(row.id), userId: String(row.user_id), name: String(row.name),
     slug: String(row.slug), icon: String(row.icon), logoUrl: optionalString(row.logo_url),
     displayOrder: Number(row.display_order), category: String(row.category),
-    status: row.status === "paused" ? "paused" : "active", endpoint: String(row.endpoint),
+    status: row.status === "paused" ? "paused" : "active",
+    deliveryMode: row.delivery_mode === "hosted" ? "hosted" : "private",
+    endpoint: String(row.endpoint),
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
   };
 }
@@ -780,17 +1102,6 @@ function toDeviceBinding(row: JsonRecord): DeviceBinding {
     deviceKeyId: optionalString(row.device_key_id),
     expiresAt: String(row.expires_at), consumedAt: optionalString(row.consumed_at),
     createdAt: String(row.created_at),
-  };
-}
-
-function toNotificationPreference(row: JsonRecord): NotificationPreference {
-  const mode = String(row.mode);
-  return {
-    userId: String(row.user_id),
-    mode: mode === "generic" || mode === "hosted_detailed"
-      ? mode
-      : "local_enrichment",
-    updatedAt: String(row.updated_at),
   };
 }
 
@@ -827,6 +1138,8 @@ function directConnectionEnvelopeRow(value: DirectConnectionEnvelope): JsonRecor
     id: value.id,
     user_id: value.userId,
     device_key_id: value.deviceKeyId,
+    project_id: value.projectId,
+    manifest_version: value.manifestVersion,
     algorithm: value.algorithm,
     ephemeral_public_key: value.ephemeralPublicKey,
     sealed_box: value.sealedBox,
@@ -840,11 +1153,59 @@ function toDirectConnectionEnvelope(row: JsonRecord): DirectConnectionEnvelope {
     id: String(row.id),
     userId: String(row.user_id),
     deviceKeyId: String(row.device_key_id),
+    projectId: String(row.project_id),
+    manifestVersion: 2,
     algorithm: "p256-hkdf-sha256-aes-gcm",
     ephemeralPublicKey: String(row.ephemeral_public_key),
     sealedBox: String(row.sealed_box),
     createdAt: String(row.created_at),
     expiresAt: String(row.expires_at),
+  };
+}
+
+function toPrivateConnectionReadiness(row: JsonRecord): PrivateConnectionReadiness {
+  return {
+    projectId: String(row.project_id),
+    deviceKeyId: String(row.device_key_id),
+    userId: String(row.user_id),
+    manifestVersion: 2,
+    readyAt: String(row.ready_at),
+    lastVerifiedAt: String(row.last_verified_at),
+    lastSyncAt: optionalString(row.last_sync_at),
+    lastErrorCode: optionalString(row.last_error_code),
+  };
+}
+
+function deliveryModeChangeRequestRow(value: DeliveryModeChangeRequest): JsonRecord {
+  return {
+    id: value.id,
+    project_id: value.projectId,
+    user_id: value.userId,
+    requested_by_token_id: value.requestedByTokenId,
+    from_mode: value.fromMode,
+    to_mode: value.toMode,
+    status: value.status,
+    created_at: value.createdAt,
+    expires_at: value.expiresAt,
+    resolved_at: value.resolvedAt ?? null,
+  };
+}
+
+function toDeliveryModeChangeRequest(row: JsonRecord): DeliveryModeChangeRequest {
+  const status = String(row.status);
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    userId: String(row.user_id),
+    requestedByTokenId: String(row.requested_by_token_id),
+    fromMode: row.from_mode === "hosted" ? "hosted" : "private",
+    toMode: row.to_mode === "hosted" ? "hosted" : "private",
+    status: status === "approved" || status === "rejected" || status === "expired"
+      ? status
+      : "pending",
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+    resolvedAt: optionalString(row.resolved_at),
   };
 }
 
@@ -913,12 +1274,92 @@ function toIngestToken(row: JsonRecord): IngestToken {
   };
 }
 
-function eventRow(value: BellwireEvent): JsonRecord {
+function privateWakeTokenRow(value: PrivateWakeToken): JsonRecord {
   return {
-    id: value.id, project_id: value.projectId, event_type: value.eventType,
-    idempotency_key: value.idempotencyKey, data: value.data,
-    sensitive_fields: value.sensitiveFields ?? Object.keys(value.data), occurred_at: value.occurredAt,
-    received_at: value.receivedAt, status: value.status, read_at: value.readAt ?? null,
+    id: value.id,
+    project_id: value.projectId,
+    name: value.name,
+    token_hash: value.tokenHash,
+    scope: value.scope,
+    created_at: value.createdAt,
+    last_used_at: value.lastUsedAt ?? null,
+    expires_at: value.expiresAt ?? null,
+    revoked_at: value.revokedAt ?? null,
+  };
+}
+
+function toPrivateWakeToken(row: JsonRecord): PrivateWakeToken {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    name: String(row.name),
+    tokenHash: String(row.token_hash),
+    scope: "wake:send",
+    createdAt: String(row.created_at),
+    lastUsedAt: optionalString(row.last_used_at),
+    expiresAt: optionalString(row.expires_at),
+    revokedAt: optionalString(row.revoked_at),
+  };
+}
+
+function toPrivateWake(row: JsonRecord): PrivateWake {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    idempotencyKeyHash: String(row.idempotency_key_hash),
+    reference: optionalString(row.reference),
+    priority: row.priority === "high" ? "high" : "normal",
+    receivedAt: String(row.received_at),
+    referenceExpiresAt: String(row.reference_expires_at),
+  };
+}
+
+function toMeteredEventWrite(row: JsonRecord): MeteredEventWrite {
+  const rawEvent = row.event_row;
+  return {
+    ...(rawEvent && typeof rawEvent === "object"
+      ? { event: toEvent(rawEvent as JsonRecord) }
+      : {}),
+    created: row.created === true,
+    quotaExceeded: row.quota_exceeded === true,
+    plan: row.plan === "pro" ? "pro" : "free",
+    acceptedSignals: Number(row.accepted_signals),
+    signalLimit: Number(row.signal_limit),
+    courtesyLimit: Number(row.courtesy_limit),
+    resetAt: String(row.reset_at),
+  };
+}
+
+function toMeteredPrivateWakeWrite(row: JsonRecord): MeteredPrivateWakeWrite {
+  const rawWake = row.wake_row;
+  return {
+    ...(rawWake && typeof rawWake === "object"
+      ? { wake: toPrivateWake(rawWake as JsonRecord) }
+      : {}),
+    created: row.created === true,
+    quotaExceeded: row.quota_exceeded === true,
+    plan: row.plan === "pro" ? "pro" : "free",
+    acceptedSignals: Number(row.accepted_signals),
+    signalLimit: Number(row.signal_limit),
+    courtesyLimit: Number(row.courtesy_limit),
+    resetAt: String(row.reset_at),
+  };
+}
+
+function toMeteredLiveSurfaceWrite(row: JsonRecord): MeteredLiveSurfaceWrite {
+  const rawSurface = row.surface_row;
+  return {
+    ...(rawSurface && typeof rawSurface === "object"
+      ? { surface: toLiveSurface(rawSurface as JsonRecord) }
+      : {}),
+    created: row.created === true,
+    quotaExceeded: row.quota_exceeded === true,
+    surfaceLimitExceeded: row.surface_limit_exceeded === true,
+    plan: row.plan === "pro" ? "pro" : "free",
+    acceptedSignals: Number(row.accepted_signals),
+    signalLimit: Number(row.signal_limit),
+    courtesyLimit: Number(row.courtesy_limit),
+    resetAt: String(row.reset_at),
   };
 }
 
@@ -926,7 +1367,7 @@ function toEvent(row: JsonRecord): BellwireEvent {
   const data = row.data as Record<string, unknown>;
   return {
     id: String(row.id), projectId: String(row.project_id), eventType: String(row.event_type),
-    idempotencyKey: String(row.idempotency_key), data,
+    idempotencyKeyHash: String(row.idempotency_key_hash), data,
     sensitiveFields: Array.isArray(row.sensitive_fields)
       ? row.sensitive_fields.filter((value): value is string => typeof value === "string")
       : Object.keys(data),
@@ -953,5 +1394,76 @@ function toDelivery(row: JsonRecord): Delivery {
     attemptCount: Number(row.attempt_count), providerMessageId: optionalString(row.provider_message_id),
     errorCode: optionalString(row.error_code), errorMessage: optionalString(row.error_message),
     queuedAt: String(row.queued_at), sentAt: optionalString(row.sent_at), updatedAt: String(row.updated_at),
+  };
+}
+
+function privateWakeDeliveryRow(value: PrivateWakeDelivery): JsonRecord {
+  return {
+    id: value.id,
+    wake_id: value.wakeId,
+    device_id: value.deviceId,
+    channel: value.channel,
+    status: value.status,
+    attempt_count: value.attemptCount,
+    provider_message_id: value.providerMessageId ?? null,
+    error_code: value.errorCode ?? null,
+    error_message: value.errorMessage ?? null,
+    queued_at: value.queuedAt,
+    sent_at: value.sentAt ?? null,
+    updated_at: value.updatedAt,
+  };
+}
+
+function toPrivateWakeDelivery(row: JsonRecord): PrivateWakeDelivery {
+  const rawStatus = String(row.status);
+  return {
+    id: String(row.id),
+    wakeId: String(row.wake_id),
+    deviceId: String(row.device_id),
+    channel: "apns",
+    status: rawStatus === "accepted_by_apns"
+      ? "accepted_by_apns"
+      : rawStatus === "failed" ? "failed" : "queued",
+    attemptCount: Number(row.attempt_count),
+    providerMessageId: optionalString(row.provider_message_id),
+    errorCode: optionalString(row.error_code),
+    errorMessage: optionalString(row.error_message),
+    queuedAt: String(row.queued_at),
+    sentAt: optionalString(row.sent_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function toAccountEntitlement(row: JsonRecord): AccountEntitlement {
+  const plan = row.plan === "pro" ? "pro" : "free";
+  const acceptedSignals = Number(row.accepted_signals);
+  const monthlySignals = Number(row.monthly_signal_limit);
+  const courtesySignals = Number(row.courtesy_signal_limit);
+  return {
+    plan,
+    status: row.status === "grace" || row.status === "expired" || row.status === "revoked"
+      ? row.status
+      : "active",
+    productId: optionalString(row.product_id),
+    expiresAt: optionalString(row.expires_at),
+    downgradeDeadline: optionalString(row.downgrade_deadline),
+    limits: {
+      activeProjects: Number(row.active_project_limit),
+      activeDevices: Number(row.active_device_limit),
+      monthlySignals,
+      courtesySignals,
+      ingestPerMinute: Number(row.ingest_per_minute),
+      hostedRetentionDays: Number(row.hosted_retention_days),
+      surfacesPerProject: Number(row.surfaces_per_project),
+    },
+    usage: {
+      periodStart: new Date(`${String(row.month_start)}T00:00:00.000Z`).toISOString(),
+      periodEnd: String(row.month_end),
+      acceptedSignals,
+      remainingSignals: Math.max(0, monthlySignals - acceptedSignals),
+      courtesyRemainingSignals: Math.max(0, courtesySignals - acceptedSignals),
+    },
+    activeProjects: Number(row.active_projects),
+    activeDevices: Number(row.active_devices),
   };
 }

@@ -42,15 +42,19 @@ final class PurchaseManager: ObservableObject {
     @Published private(set) var products: [String: Product] = [:]
     @Published private(set) var eligibleTrialProductIDs: Set<String> = []
     @Published private(set) var purchasedProductIDs: Set<String> = []
+    @Published private(set) var serverEntitlement: AccountEntitlement?
     @Published private(set) var loadState: LoadState = .idle
     @Published private(set) var isPurchasing = false
     @Published private(set) var isRestoring = false
     @Published var errorMessage: String?
 
     private var updatesTask: Task<Void, Never>?
+    private var transactionUploader: ((String, String) async throws -> AccountEntitlement)?
+    private var entitlementLoader: (() async throws -> AccountEntitlement)?
 
     var hasPro: Bool {
-        !purchasedProductIDs.isDisjoint(with: Self.productIDs)
+        serverEntitlement?.hasPro
+            ?? !purchasedProductIDs.isDisjoint(with: Self.productIDs)
     }
 
     static let productIDs = Set(BellwirePurchasePlan.allCases.map(\.productID))
@@ -64,6 +68,14 @@ final class PurchaseManager: ObservableObject {
         }
     }
 
+    func configure(
+        transactionUploader: @escaping (String, String) async throws -> AccountEntitlement,
+        entitlementLoader: @escaping () async throws -> AccountEntitlement
+    ) {
+        self.transactionUploader = transactionUploader
+        self.entitlementLoader = entitlementLoader
+    }
+
     deinit {
         updatesTask?.cancel()
     }
@@ -72,6 +84,7 @@ final class PurchaseManager: ObservableObject {
         async let products: Void = loadProducts()
         async let entitlements: Void = refreshEntitlements()
         _ = await (products, entitlements)
+        await refreshServerEntitlement()
     }
 
     func product(for plan: BellwirePurchasePlan) -> Product? {
@@ -116,17 +129,18 @@ final class PurchaseManager: ObservableObject {
         defer { isPurchasing = false }
 
         do {
-            let result: Product.PurchaseResult
-            if let appAccountToken {
-                result = try await product.purchase(options: [.appAccountToken(appAccountToken)])
-            } else {
-                result = try await product.purchase()
+            guard let appAccountToken else {
+                throw PurchaseVerificationError.missingAccountToken
             }
+            let result: Product.PurchaseResult
+            result = try await product.purchase(options: [.appAccountToken(appAccountToken)])
             switch result {
             case .success(let verification):
                 let transaction = try verified(verification)
+                try await upload(verification.jwsRepresentation, source: "purchase")
                 await transaction.finish()
                 await refreshEntitlements()
+                await refreshServerEntitlement()
                 BellwireHaptics.success()
                 return true
             case .pending:
@@ -152,7 +166,8 @@ final class PurchaseManager: ObservableObject {
 
         do {
             try await AppStore.sync()
-            await refreshEntitlements()
+            await refreshEntitlements(source: "restore")
+            await refreshServerEntitlement()
             if hasPro {
                 BellwireHaptics.success()
             } else {
@@ -164,7 +179,7 @@ final class PurchaseManager: ObservableObject {
         }
     }
 
-    func refreshEntitlements() async {
+    func refreshEntitlements(source: String = "sync") async {
         var activeProductIDs = Set<String>()
 
         for await entitlement in Transaction.currentEntitlements {
@@ -174,6 +189,11 @@ final class PurchaseManager: ObservableObject {
                 continue
             }
             activeProductIDs.insert(transaction.productID)
+            do {
+                try await upload(entitlement.jwsRepresentation, source: source)
+            } catch {
+                errorMessage = String(localized: "Your App Store purchase could not be synced with Bellwire.")
+            }
         }
 
         purchasedProductIDs = activeProductIDs
@@ -181,8 +201,33 @@ final class PurchaseManager: ObservableObject {
 
     private func process(_ result: VerificationResult<Transaction>) async {
         guard case .verified(let transaction) = result else { return }
-        await transaction.finish()
+        do {
+            try await upload(result.jwsRepresentation, source: "sync")
+            await transaction.finish()
+        } catch {
+            errorMessage = String(localized: "Your App Store purchase could not be synced with Bellwire.")
+            return
+        }
         await refreshEntitlements()
+        await refreshServerEntitlement()
+    }
+
+    func refreshServerEntitlement() async {
+        guard let entitlementLoader else { return }
+        do {
+            serverEntitlement = try await entitlementLoader()
+        } catch {
+            if serverEntitlement == nil {
+                errorMessage = String(localized: "Bellwire could not refresh your plan status.")
+            }
+        }
+    }
+
+    private func upload(_ signedTransactionInfo: String, source: String) async throws {
+        guard let transactionUploader else {
+            throw PurchaseVerificationError.serverNotConfigured
+        }
+        serverEntitlement = try await transactionUploader(signedTransactionInfo, source)
     }
 
     private func verified<T>(_ result: VerificationResult<T>) throws -> T {
@@ -197,4 +242,6 @@ final class PurchaseManager: ObservableObject {
 
 private enum PurchaseVerificationError: Error {
     case failed
+    case missingAccountToken
+    case serverNotConfigured
 }

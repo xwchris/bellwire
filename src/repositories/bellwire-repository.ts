@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
   BellwireEvent,
+  AccountEntitlement,
   AgentToken,
+  AppleTransactionRecord,
   Delivery,
+  DeliveryModeChangeRequest,
   DeliveryHealth,
   Device,
   DeviceBinding,
@@ -13,8 +16,14 @@ import type {
   EventSchema,
   IngestToken,
   LiveSurface,
-  NotificationPreference,
+  MeteredEventWrite,
+  MeteredLiveSurfaceWrite,
+  MeteredPrivateWakeWrite,
   NotificationSurface,
+  PrivateConnectionReadiness,
+  PrivateWake,
+  PrivateWakeDelivery,
+  PrivateWakeToken,
   Project,
 } from "../domain/models";
 
@@ -46,11 +55,6 @@ export interface BellwireRepository {
   listDevices(userId: string): Promise<Device[]>;
   deleteDevice(deviceId: string): Promise<void>;
 
-  getNotificationPreference(userId: string): Promise<NotificationPreference | undefined>;
-  saveNotificationPreference(
-    preference: NotificationPreference,
-  ): Promise<NotificationPreference>;
-
   saveDeviceBinding(binding: DeviceBinding): Promise<DeviceBinding>;
   findDeviceBindingByCodeHash(codeHash: string): Promise<DeviceBinding | undefined>;
   claimDeviceBinding(
@@ -75,7 +79,31 @@ export interface BellwireRepository {
     deviceKeyId: string,
     now: string,
   ): Promise<DirectConnectionEnvelope[]>;
-  deleteDirectConnectionEnvelope(envelopeId: string, userId: string): Promise<void>;
+  acknowledgeDirectConnectionEnvelope(
+    envelopeId: string,
+    userId: string,
+    deviceKeyId: string,
+    verifiedAt: string,
+  ): Promise<string | undefined>;
+  getPrivateConnectionReadiness(
+    projectId: string,
+    deviceKeyId: string,
+  ): Promise<PrivateConnectionReadiness | undefined>;
+  listPrivateConnectionReadiness(projectId: string): Promise<PrivateConnectionReadiness[]>;
+
+  saveDeliveryModeChangeRequest(
+    request: DeliveryModeChangeRequest,
+  ): Promise<DeliveryModeChangeRequest>;
+  listDeliveryModeChangeRequests(
+    userId: string,
+    status?: DeliveryModeChangeRequest["status"],
+  ): Promise<DeliveryModeChangeRequest[]>;
+  resolveDeliveryModeChangeRequest(
+    requestId: string,
+    userId: string,
+    approved: boolean,
+    resolvedAt: string,
+  ): Promise<DeliveryModeChangeRequest | undefined>;
 
   saveEventSchema(schema: EventSchema): Promise<EventSchema>;
   getEventSchema(
@@ -92,6 +120,10 @@ export interface BellwireRepository {
   listNotificationSurfaces(projectId: string): Promise<NotificationSurface[]>;
 
   saveLiveSurface(surface: LiveSurface): Promise<LiveSurface>;
+  acceptHostedSurface(
+    surface: LiveSurface,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredLiveSurfaceWrite>;
   getLiveSurface(projectId: string, surfaceKey: string): Promise<LiveSurface | undefined>;
   listLiveSurfaces(projectId: string): Promise<LiveSurface[]>;
   updateLiveSurfaceDisplayOrder(surfaceId: string, displayOrder: number): Promise<LiveSurface>;
@@ -106,8 +138,26 @@ export interface BellwireRepository {
   markIngestTokenUsed(tokenId: string, usedAt: string): Promise<void>;
   revokeIngestToken(tokenId: string, revokedAt: string): Promise<void>;
 
+  savePrivateWakeToken(token: PrivateWakeToken): Promise<PrivateWakeToken>;
+  listPrivateWakeTokens(projectId: string): Promise<PrivateWakeToken[]>;
+  findPrivateWakeTokenByHash(
+    projectId: string,
+    tokenHash: string,
+  ): Promise<PrivateWakeToken | undefined>;
+  markPrivateWakeTokenUsed(tokenId: string, usedAt: string): Promise<void>;
+  revokePrivateWakeToken(tokenId: string, revokedAt: string): Promise<void>;
+
   consumeRateLimit(key: string, limit: number, windowSeconds: number): Promise<boolean>;
-  createEventIfAbsent(event: BellwireEvent): Promise<CreateEventResult>;
+  acceptHostedEvent(
+    event: BellwireEvent,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredEventWrite>;
+  acceptPrivateWake(
+    wake: PrivateWake,
+    enforcementMode: "disabled" | "shadow" | "enforce",
+  ): Promise<MeteredPrivateWakeWrite>;
+  getPrivateWake(wakeId: string): Promise<PrivateWake | undefined>;
+  clearPrivateWakeReference(wakeId: string): Promise<void>;
   listEvents(projectId: string, options: EventListOptions): Promise<EventListPage>;
   getEvent(eventId: string): Promise<BellwireEvent | undefined>;
   markEventRead(eventId: string, readAt: string): Promise<void>;
@@ -129,4 +179,29 @@ export interface BellwireRepository {
   updateDelivery(delivery: Delivery): Promise<Delivery>;
   listDeliveries(eventId: string): Promise<Delivery[]>;
   getDeliveryHealth(projectId: string, since: string): Promise<DeliveryHealth>;
+
+  createPrivateWakeDeliveryIfAbsent(
+    delivery: PrivateWakeDelivery,
+  ): Promise<{ delivery: PrivateWakeDelivery; created: boolean }>;
+  claimPrivateWakeDelivery(
+    deliveryId: string,
+    claimedAt: string,
+    leaseSeconds: number,
+    maxAttempts: number,
+  ): Promise<PrivateWakeDelivery | undefined>;
+  completeClaimedPrivateWakeDelivery(
+    delivery: PrivateWakeDelivery,
+  ): Promise<PrivateWakeDelivery | undefined>;
+  updatePrivateWakeDelivery(delivery: PrivateWakeDelivery): Promise<PrivateWakeDelivery>;
+  listPrivateWakeDeliveries(wakeId: string): Promise<PrivateWakeDelivery[]>;
+
+  getAccountEntitlement(userId: string, now: string): Promise<AccountEntitlement>;
+  saveAppleTransaction(transaction: AppleTransactionRecord): Promise<void>;
+  saveAppleNotificationReceipt(
+    notificationUUID: string,
+    notificationType: string,
+    subtype: string | undefined,
+    signedDate: string,
+  ): Promise<boolean>;
+  runMaintenance(now: string): Promise<unknown>;
 }

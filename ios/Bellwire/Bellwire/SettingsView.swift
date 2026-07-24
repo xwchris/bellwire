@@ -12,13 +12,19 @@ struct SettingsView: View {
     @State private var showsAgentInstructions = false
     @State private var showsSignOutConfirmation = false
     @State private var showsDeleteAccountPage = false
+    @State private var showsClearPrivateHistoryConfirmation = false
     @State private var showsPaywall = false
     @State private var showsFeedbackMail = false
     @State private var showsFeedbackFallback = false
     @State private var feedbackEmailCopied = false
     @State private var pendingAgentRevocation: AgentConnectionRecord?
+    @State private var pendingDeviceDeletion: DeviceRecord?
     @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.system.rawValue
     @AppStorage(AppAppearance.storageKey) private var appAppearance = AppAppearance.system.rawValue
+
+    private var hasPro: Bool {
+        model.entitlement?.hasPro ?? purchaseManager.hasPro
+    }
 
     var body: some View {
         NavigationStack {
@@ -31,6 +37,10 @@ struct SettingsView: View {
 
                     accountCard
                     proSection
+                    usageSection
+                    if !model.pendingModeRequests.isEmpty {
+                        modeRequestsSection
+                    }
                     connectionSection
                     notificationsSection
                     appPreferencesSection
@@ -98,12 +108,31 @@ struct SettingsView: View {
             } message: {
                 Text("Your local session will be removed. Connected projects and server data are not deleted.")
             }
+            .alert(
+                "Clear Private history?",
+                isPresented: $showsClearPrivateHistoryConfirmation
+            ) {
+                Button("Clear history", role: .destructive) { model.clearPrivateHistory() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Private notification and Inbox details cached on this iPhone will be removed. Your service data is not affected.")
+            }
             .alert(item: $pendingAgentRevocation) { connection in
                 Alert(
                     title: Text("Disconnect Agent?"),
                     message: Text("“\(connection.name)” will immediately lose access to Bellwire. Your projects and data will remain."),
                     primaryButton: .destructive(Text("Disconnect")) {
                         Task { await model.revokeAgentConnection(id: connection.id) }
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            .alert(item: $pendingDeviceDeletion) { device in
+                Alert(
+                    title: Text("Remove device?"),
+                    message: Text("“\(device.name)” will stop receiving Bellwire notifications. You can register it again later."),
+                    primaryButton: .destructive(Text("Remove")) {
+                        Task { await model.deleteDevice(id: device.id) }
                     },
                     secondaryButton: .cancel()
                 )
@@ -147,13 +176,19 @@ struct SettingsView: View {
 
     private var proSection: some View {
         Button {
-            showsPaywall = true
+            if hasPro {
+                Task { await model.captureProductEvent("subscription_managed", source: "settings") }
+                openURL(URL(string: "https://apps.apple.com/account/subscriptions")!)
+            } else {
+                Task { await model.captureProductEvent("upgrade_clicked", source: "settings") }
+                showsPaywall = true
+            }
         } label: {
             HStack(spacing: BellwireSpacing.standard) {
                 ZStack {
                     RoundedRectangle(cornerRadius: BellwireRadius.control, style: .continuous)
                         .fill(BellwireTheme.accent.opacity(0.14))
-                    Image(systemName: purchaseManager.hasPro ? "checkmark.seal.fill" : "sparkles")
+                    Image(systemName: hasPro ? "checkmark.seal.fill" : "sparkles")
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(BellwireTheme.accent)
                 }
@@ -164,7 +199,7 @@ struct SettingsView: View {
                         Text("Bellwire Pro")
                             .font(.headline.weight(.semibold))
                             .foregroundStyle(BellwireTheme.ink)
-                        if purchaseManager.hasPro {
+                        if hasPro {
                             Text("ACTIVE")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .tracking(0.6)
@@ -175,7 +210,7 @@ struct SettingsView: View {
                         }
                     }
                     Text(
-                        purchaseManager.hasPro
+                        hasPro
                             ? "Your Pro access is active"
                             : "More projects, events, devices, and history"
                     )
@@ -208,7 +243,244 @@ struct SettingsView: View {
             .shadow(color: BellwireTheme.cardShadow, radius: 14, y: 5)
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityHint("Opens Bellwire Pro purchase options")
+        .accessibilityHint(
+            hasPro
+                ? "Opens App Store subscription management"
+                : "Opens Bellwire Pro purchase options"
+        )
+    }
+
+    private var usageSection: some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(title: "Plan & usage")
+            if let entitlement = model.entitlement {
+                VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entitlement.plan == "pro" ? "Pro" : "Free")
+                                .font(.headline.weight(.semibold))
+                                .foregroundStyle(BellwireTheme.ink)
+                            Text("\(entitlement.usage.acceptedSignals.formatted()) of \(entitlement.limits.monthlySignals.formatted()) Signals")
+                                .font(.caption)
+                                .foregroundStyle(BellwireTheme.secondaryInk)
+                        }
+                        Spacer()
+                        Text(signalUsagePercent(entitlement), format: .percent.precision(.fractionLength(0)))
+                            .font(BellwireTypography.technicalStrong)
+                            .foregroundStyle(signalUsageColor(entitlement))
+                    }
+
+                    ProgressView(value: signalUsagePercent(entitlement))
+                        .tint(signalUsageColor(entitlement))
+
+                    HStack {
+                        if let resetDate = ISO8601DateFormatter.bellwireDate(
+                            from: entitlement.usage.periodEnd
+                        ) {
+                            Label {
+                                Text("Resets \(resetDate, format: .dateTime.month().day().hour().minute())")
+                            } icon: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                        Spacer()
+                        Text("Hosted history · \(entitlement.limits.hostedRetentionDays) days")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(BellwireTheme.mutedInk)
+
+                    if let notice = quotaNotice(entitlement) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(notice.title, systemImage: notice.icon)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(notice.color)
+                            Text(notice.message)
+                                .font(.caption)
+                                .foregroundStyle(BellwireTheme.secondaryInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(BellwireSpacing.small)
+                        .background(
+                            notice.color.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: BellwireRadius.small)
+                        )
+                    }
+
+                    if entitlement.plan == "free",
+                       entitlement.activeProjects > entitlement.limits.activeProjects
+                        || entitlement.activeDevices > entitlement.limits.activeDevices {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Label("Choose what stays active", systemImage: "exclamationmark.circle.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(BellwireTheme.warning)
+                            Text(
+                                "Pause projects and remove devices until you are within the Free limits. Bellwire will never delete them just because Pro ended."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(BellwireTheme.secondaryInk)
+                            if let deadline = entitlement.downgradeDeadline,
+                               let date = ISO8601DateFormatter.bellwireDate(from: deadline) {
+                                Text("Automatic organization \(date, style: .relative)")
+                                    .font(.caption2)
+                                    .foregroundStyle(BellwireTheme.mutedInk)
+                            }
+                        }
+                        .padding(BellwireSpacing.small)
+                        .background(BellwireTheme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    HStack(spacing: BellwireSpacing.small) {
+                        planMetric(
+                            entitlement.activeProjects,
+                            entitlement.limits.activeProjects,
+                            "Projects"
+                        )
+                        planMetric(
+                            entitlement.activeDevices,
+                            entitlement.limits.activeDevices,
+                            "Devices"
+                        )
+                        planLimitMetric(
+                            entitlement.limits.surfacesPerProject,
+                            "Surfaces"
+                        )
+                    }
+
+                    Divider().overlay(BellwireTheme.separator)
+                    Button {
+                        showsClearPrivateHistoryConfirmation = true
+                    } label: {
+                        Label("Clear Private history on this iPhone", systemImage: "trash")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(BellwireTheme.danger)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .buttonStyle(PressableButtonStyle())
+                }
+                .padding(BellwireSpacing.standard)
+                .bellwireSurface(elevated: false)
+            } else {
+                LoadingEventRows(count: 1)
+            }
+        }
+    }
+
+    private var modeRequestsSection: some View {
+        VStack(alignment: .leading, spacing: BellwireSpacing.small) {
+            SectionHeaderView(
+                title: "Delivery mode requests",
+                hint: "\(model.pendingModeRequests.count)"
+            )
+            ForEach(model.pendingModeRequests) { request in
+                VStack(alignment: .leading, spacing: BellwireSpacing.standard) {
+                    Label(
+                        request.toMode == .hosted ? "Enable Hosted delivery?" : "Enable Private delivery?",
+                        systemImage: request.toMode == .hosted ? "cloud.fill" : "lock.shield.fill"
+                    )
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(BellwireTheme.ink)
+                    Text(
+                        request.toMode == .hosted
+                            ? "Bellwire Cloud will receive and retain this project's Event, Inbox, Surface, and detailed notification content."
+                            : "Bellwire will send content-free wakes. At least one iPhone must have a verified Direct connection."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(BellwireTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: BellwireSpacing.small) {
+                        Button("Reject", role: .cancel) {
+                            Task { await model.resolveModeRequest(id: request.id, approve: false) }
+                        }
+                        .buttonStyle(.bordered)
+                        Button("Approve") {
+                            Task { await model.resolveModeRequest(id: request.id, approve: true) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(BellwireTheme.accent)
+                    }
+                }
+                .padding(BellwireSpacing.standard)
+                .bellwireSurface(elevated: false)
+            }
+        }
+    }
+
+    private func planMetric(_ value: Int, _ limit: Int, _ title: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(value)/\(limit)")
+                .font(BellwireTypography.technicalStrong)
+                .foregroundStyle(BellwireTheme.ink)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(BellwireTheme.mutedInk)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func planLimitMetric(_ limit: Int, _ title: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(limit)/project")
+                .font(BellwireTypography.technicalStrong)
+                .foregroundStyle(BellwireTheme.ink)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(BellwireTheme.mutedInk)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func signalUsagePercent(_ entitlement: AccountEntitlement) -> Double {
+        min(
+            Double(entitlement.usage.acceptedSignals)
+                / Double(max(entitlement.limits.monthlySignals, 1)),
+            1.1
+        )
+    }
+
+    private func signalUsageColor(_ entitlement: AccountEntitlement) -> Color {
+        let value = signalUsagePercent(entitlement)
+        return value >= 1 ? BellwireTheme.danger : value >= 0.8 ? BellwireTheme.warning : BellwireTheme.accent
+    }
+
+    private func quotaNotice(
+        _ entitlement: AccountEntitlement
+    ) -> (title: LocalizedStringKey, message: LocalizedStringKey, icon: String, color: Color)? {
+        let used = entitlement.usage.acceptedSignals
+        let limit = entitlement.limits.monthlySignals
+        let courtesy = entitlement.limits.courtesySignals
+        if used >= courtesy {
+            return (
+                "Signal limit reached",
+                "New Signals will be rejected until the UTC monthly reset. Already accepted notifications will still be delivered.",
+                "xmark.octagon.fill",
+                BellwireTheme.danger
+            )
+        }
+        if used > limit {
+            return (
+                "Courtesy buffer in use",
+                "Bellwire is still accepting Signals temporarily. Upgrade or reduce traffic before the buffer is exhausted.",
+                "exclamationmark.triangle.fill",
+                BellwireTheme.danger
+            )
+        }
+        if used >= limit {
+            return (
+                "Monthly allowance used",
+                "A limited courtesy buffer is active. Upgrade or wait for the monthly reset.",
+                "exclamationmark.triangle.fill",
+                BellwireTheme.warning
+            )
+        }
+        if used >= Int((Double(limit) * 0.8).rounded(.up)) {
+            return (
+                "80% of monthly Signals used",
+                "Review usage now so important notifications keep flowing.",
+                "gauge.with.dots.needle.67percent",
+                BellwireTheme.warning
+            )
+        }
+        return nil
     }
 
     private var connectionSection: some View {
@@ -299,40 +571,14 @@ struct SettingsView: View {
                     )
                 }
                 Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
-                Menu {
-                    ForEach(NotificationPrivacyMode.allCases) { mode in
-                        Button {
-                            Task { await model.setNotificationPrivacyMode(mode) }
-                        } label: {
-                            if model.notificationPrivacyMode == mode {
-                                Label {
-                                    Text(mode.title)
-                                } icon: {
-                                    Image(systemName: "checkmark")
-                                }
-                            } else {
-                                Text(mode.title)
-                            }
-                        }
-                    }
-                } label: {
-                    SettingsRowView(
-                        icon: "hand.raised.fill",
-                        title: "Notification privacy",
-                        hint: "Choose how notification details reach this iPhone"
-                    ) {
-                        if model.isUpdatingNotificationPrivacy {
-                            ProgressView().tint(BellwireTheme.accent)
-                        } else {
-                            settingSelectionLabel(model.notificationPrivacyMode.title)
-                        }
-                    }
+                SettingsRowView(
+                    icon: "hand.raised.fill",
+                    title: "Private by default",
+                    hint: "Private projects fetch details directly from your service"
+                ) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundStyle(BellwireTheme.success)
                 }
-                .buttonStyle(PressableButtonStyle())
-                .disabled(model.isUpdatingNotificationPrivacy)
-                .accessibilityLabel("Notification privacy")
-                .accessibilityValue(Text(model.notificationPrivacyMode.title))
-                .accessibilityHint(Text(model.notificationPrivacyMode.hint))
                 Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
                 Button { openSystemSettings() } label: {
                     SettingsRowView(
@@ -350,7 +596,7 @@ struct SettingsView: View {
             .padding(.horizontal, BellwireSpacing.standard)
             .bellwireSurface()
 
-            Text(model.notificationPrivacyMode.hint)
+            Text("Hosted projects are clearly labeled and only enabled after your approval.")
                 .font(.caption)
                 .foregroundStyle(BellwireTheme.mutedInk)
                 .padding(.horizontal, BellwireSpacing.standard)
@@ -370,7 +616,10 @@ struct SettingsView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(model.devices.enumerated()), id: \.element.id) { index, device in
-                        DeviceRowView(device: device)
+                        DeviceRowView(
+                            device: device,
+                            onDelete: { pendingDeviceDeletion = device }
+                        )
                         if index < model.devices.count - 1 {
                             Divider().overlay(BellwireTheme.separator).padding(.leading, 44)
                         }

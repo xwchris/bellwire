@@ -8,6 +8,7 @@ enum AppConfig {
     static let keychainService = "\(Bundle.main.bundleIdentifier ?? "app.bellwire").session"
     static let sharedDirectKeychainService = "app.bellwire.direct-shared"
     static let keychainAccessGroup = requiredValue(for: "BellwireKeychainAccessGroup")
+    static let urlScheme = requiredValue(for: "BellwireURLScheme")
 
     private static func requiredURL(for key: String) -> URL {
         let value = requiredValue(for: key)

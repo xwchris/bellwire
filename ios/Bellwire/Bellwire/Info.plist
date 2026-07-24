@@ -26,6 +26,10 @@
     <string>$(BELLWIRE_SUPABASE_PUBLISHABLE_KEY)</string>
     <key>BellwireKeychainAccessGroup</key>
     <string>$(AppIdentifierPrefix)$(BELLWIRE_APP_BUNDLE_ID).shared</string>
+    <key>BellwireAppGroup</key>
+    <string>$(BELLWIRE_APP_GROUP)</string>
+    <key>BellwireURLScheme</key>
+    <string>$(BELLWIRE_URL_SCHEME)</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -43,6 +47,8 @@
     <true/>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <key>NSSupportsLiveActivities</key>
+    <true/>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

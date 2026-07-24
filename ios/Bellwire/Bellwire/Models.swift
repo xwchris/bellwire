@@ -43,11 +43,18 @@ struct ProjectSummary: Codable, Identifiable, Hashable {
     let displayOrder: Int
     let category: String
     let status: String
+    let deliveryMode: ProjectDeliveryMode
     let endpoint: String
     let createdAt: String
     let updatedAt: String
 
     var isPaused: Bool { status == "paused" }
+    var isPrivate: Bool { deliveryMode == .private }
+}
+
+enum ProjectDeliveryMode: String, Codable {
+    case `private`
+    case hosted
 }
 
 struct ProjectsResponse: Decodable {
@@ -117,6 +124,7 @@ struct ProjectOverview: Decodable, Identifiable {
     let displayOrder: Int
     let category: String
     let status: String
+    let deliveryMode: ProjectDeliveryMode
     let endpoint: String
     let createdAt: String
     let updatedAt: String
@@ -124,6 +132,24 @@ struct ProjectOverview: Decodable, Identifiable {
     let notificationSurfaces: [NotificationSurfaceSummary]
     let liveSurfaces: [LiveSurfaceRecord]
     let deliveryHealth: DeliveryHealth
+    let privateReadiness: PrivateReadinessSummary
+}
+
+struct PrivateReadinessSummary: Decodable {
+    let readyDevices: Int
+    let activeDevices: Int
+    let connections: [PrivateConnectionReadiness]
+}
+
+struct PrivateConnectionReadiness: Decodable, Identifiable {
+    let projectId: String
+    let deviceKeyId: String
+    let readyAt: String
+    let lastVerifiedAt: String
+    let lastSyncAt: String?
+    let lastErrorCode: String?
+
+    var id: String { "\(projectId):\(deviceKeyId)" }
 }
 
 struct EventSchemaSummary: Decodable, Identifiable {
@@ -280,7 +306,7 @@ struct EventDetail: Decodable, Identifiable {
     let id: String
     let projectId: String
     let eventType: String
-    let idempotencyKey: String
+    let idempotencyKeyHash: String?
     let data: [String: JSONValue]
     let occurredAt: String
     let receivedAt: String
@@ -290,8 +316,36 @@ struct EventDetail: Decodable, Identifiable {
     let sensitiveFields: [String]
     let deliveries: [DeliveryRecord]
 
+    init(
+        id: String,
+        projectId: String,
+        eventType: String,
+        idempotencyKeyHash: String?,
+        data: [String: JSONValue],
+        occurredAt: String,
+        receivedAt: String,
+        status: String,
+        readAt: String?,
+        project: EventProject,
+        sensitiveFields: [String],
+        deliveries: [DeliveryRecord]
+    ) {
+        self.id = id
+        self.projectId = projectId
+        self.eventType = eventType
+        self.idempotencyKeyHash = idempotencyKeyHash
+        self.data = data
+        self.occurredAt = occurredAt
+        self.receivedAt = receivedAt
+        self.status = status
+        self.readAt = readAt
+        self.project = project
+        self.sensitiveFields = sensitiveFields
+        self.deliveries = deliveries
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, projectId, eventType, idempotencyKey, data, occurredAt, receivedAt
+        case id, projectId, eventType, idempotencyKeyHash, data, occurredAt, receivedAt
         case status, readAt, project, sensitiveFields, deliveries
     }
 
@@ -300,7 +354,7 @@ struct EventDetail: Decodable, Identifiable {
         id = try container.decode(String.self, forKey: .id)
         projectId = try container.decode(String.self, forKey: .projectId)
         eventType = try container.decode(String.self, forKey: .eventType)
-        idempotencyKey = try container.decode(String.self, forKey: .idempotencyKey)
+        idempotencyKeyHash = try container.decodeIfPresent(String.self, forKey: .idempotencyKeyHash)
         data = try container.decode([String: JSONValue].self, forKey: .data)
         occurredAt = try container.decode(String.self, forKey: .occurredAt)
         receivedAt = try container.decode(String.self, forKey: .receivedAt)
@@ -335,42 +389,6 @@ struct DeviceRecord: Decodable, Identifiable {
     let pushEnabled: Bool
 }
 
-enum NotificationPrivacyMode: String, Codable, CaseIterable, Identifiable {
-    case generic
-    case localEnrichment = "local_enrichment"
-    case hostedDetailed = "hosted_detailed"
-
-    var id: String { rawValue }
-
-    var title: LocalizedStringKey {
-        switch self {
-        case .generic: return "Generic only"
-        case .localEnrichment: return "Private details"
-        case .hostedDetailed: return "Detailed via Bellwire"
-        }
-    }
-
-    var hint: LocalizedStringKey {
-        switch self {
-        case .generic:
-            return "Lock Screen hides details. Open Bellwire to view updates."
-        case .localEnrichment:
-            return "Your iPhone fetches details directly before showing the notification."
-        case .hostedDetailed:
-            return "Most reliable. Notification details pass through Bellwire and APNs."
-        }
-    }
-}
-
-struct NotificationPreferenceRecord: Decodable {
-    let mode: NotificationPrivacyMode
-    let updatedAt: String
-}
-
-struct UpdateNotificationPreferencePayload: Encodable {
-    let mode: NotificationPrivacyMode
-}
-
 struct DevicesResponse: Decodable {
     let devices: [DeviceRecord]
 }
@@ -396,6 +414,8 @@ struct AgentConnectionsResponse: Decodable {
 struct DirectConnectionEnvelopeRecord: Decodable, Identifiable {
     let id: String
     let deviceKeyId: String
+    let projectId: String
+    let manifestVersion: Int
     let algorithm: String
     let ephemeralPublicKey: String
     let sealedBox: String
@@ -407,38 +427,41 @@ struct DirectConnectionEnvelopesResponse: Decodable {
     let envelopes: [DirectConnectionEnvelopeRecord]
 }
 
+struct DirectConnectionAckPayload: Encodable {
+    let deviceKeyId: String
+}
+
 struct DirectConnectionManifest: Codable, Identifiable {
     let version: Int
     let connectionId: String
     let baseUrl: String
-    let surfacesPath: String
-    let notificationPath: String?
     let project: DirectProjectManifest
+    let endpoints: DirectEndpointsManifest
+    let capabilities: [String]
 
     var id: String { connectionId }
 
     var surfacesURL: URL? {
-        guard version == 1,
+        guard version == 2,
               let base = URL(string: baseUrl),
               base.scheme?.lowercased() == "https",
               base.user == nil,
               base.password == nil,
-              surfacesPath.hasPrefix("/"),
-              !surfacesPath.hasPrefix("//")
+              endpoints.surfaces.hasPrefix("/"),
+              !endpoints.surfaces.hasPrefix("//")
         else { return nil }
-        return URL(string: surfacesPath, relativeTo: base)?.absoluteURL
+        return URL(string: endpoints.surfaces, relativeTo: base)?.absoluteURL
     }
 
     func notificationURL(reference: String) -> URL? {
-        guard version == 1,
-              let notificationPath,
+        guard version == 2,
               let base = URL(string: baseUrl),
               base.scheme?.lowercased() == "https",
               base.user == nil,
               base.password == nil,
-              notificationPath.hasPrefix("/"),
-              !notificationPath.hasPrefix("//"),
-              let rawURL = URL(string: notificationPath, relativeTo: base)?.absoluteURL,
+              endpoints.notification.hasPrefix("/"),
+              !endpoints.notification.hasPrefix("//"),
+              let rawURL = URL(string: endpoints.notification, relativeTo: base)?.absoluteURL,
               var components = URLComponents(url: rawURL, resolvingAgainstBaseURL: false)
         else { return nil }
         var queryItems = components.queryItems ?? []
@@ -447,6 +470,33 @@ struct DirectConnectionManifest: Codable, Identifiable {
         components.queryItems = queryItems
         return components.url
     }
+
+    func inboxURL(cursor: String? = nil, limit: Int = 50) -> URL? {
+        guard version == 2,
+              let base = URL(string: baseUrl),
+              base.scheme?.lowercased() == "https",
+              base.user == nil,
+              base.password == nil,
+              endpoints.inbox.hasPrefix("/"),
+              !endpoints.inbox.hasPrefix("//"),
+              let rawURL = URL(string: endpoints.inbox, relativeTo: base)?.absoluteURL,
+              var components = URLComponents(url: rawURL, resolvingAgainstBaseURL: false)
+        else { return nil }
+        var queryItems = components.queryItems ?? []
+        queryItems.removeAll { $0.name == "cursor" || $0.name == "limit" }
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        queryItems.append(URLQueryItem(name: "limit", value: String(min(max(limit, 1), 50))))
+        components.queryItems = queryItems
+        return components.url
+    }
+}
+
+struct DirectEndpointsManifest: Codable {
+    let notification: String
+    let inbox: String
+    let surfaces: String
 }
 
 struct DirectProjectManifest: Codable {
@@ -455,6 +505,80 @@ struct DirectProjectManifest: Codable {
     let icon: String
     let logoUrl: String?
     let displayOrder: Int
+    let category: String
+}
+
+struct PrivateInboxPage: Decodable {
+    let events: [PrivateEventPayload]
+    let nextCursor: String?
+}
+
+struct PrivateEventPayload: Codable {
+    let reference: String
+    let eventType: String
+    let title: String
+    let body: String
+    let subtitle: String?
+    let occurredAt: String
+    let data: [String: JSONValue]
+    let deepLink: String?
+    let logoUrl: String?
+}
+
+struct AccountEntitlement: Codable {
+    let plan: String
+    let status: String
+    let productId: String?
+    let expiresAt: String?
+    let downgradeDeadline: String?
+    let limits: PlanLimits
+    let usage: SignalUsage
+    let activeProjects: Int
+    let activeDevices: Int
+
+    var hasPro: Bool { plan == "pro" && (status == "active" || status == "grace") }
+}
+
+struct PlanLimits: Codable {
+    let activeProjects: Int
+    let activeDevices: Int
+    let monthlySignals: Int
+    let courtesySignals: Int
+    let ingestPerMinute: Int
+    let hostedRetentionDays: Int
+    let surfacesPerProject: Int
+}
+
+struct SignalUsage: Codable {
+    let periodStart: String
+    let periodEnd: String
+    let acceptedSignals: Int
+    let remainingSignals: Int
+    let courtesyRemainingSignals: Int
+}
+
+struct AppleTransactionPayload: Encodable {
+    let signedTransactionInfo: String
+    let source: String
+}
+
+struct ProductAnalyticsPayload: Encodable {
+    let event: String
+    let properties: [String: String]
+}
+
+struct DeliveryModeChangeRequest: Decodable, Identifiable {
+    let id: String
+    let projectId: String
+    let fromMode: ProjectDeliveryMode
+    let toMode: ProjectDeliveryMode
+    let status: String
+    let createdAt: String
+    let expiresAt: String
+}
+
+struct DeliveryModeChangeRequestsResponse: Decodable {
+    let requests: [DeliveryModeChangeRequest]
 }
 
 struct BindingResponse: Decodable, Identifiable {
