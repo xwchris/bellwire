@@ -303,9 +303,13 @@ struct ProjectDetailView: View {
         .sheet(item: $exportDocument) { document in
             ProjectExportShareSheet(url: document.url)
         }
-        .fullScreenCover(isPresented: $showsPaywall) {
+        .sheet(isPresented: $showsPaywall) {
             PaywallView(appAccountToken: model.session.flatMap { UUID(uuidString: $0.user.id) })
                 .environmentObject(purchaseManager)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationCornerRadius(BellwireRadius.hero)
+                .presentationBackground(BellwireTheme.background)
         }
     }
 

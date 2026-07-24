@@ -238,6 +238,28 @@ describe("Bellwire MVP API", () => {
     expect(await unknown.json()).toMatchObject({ error: { code: "INVALID_REQUEST" } });
     const shortReference = await send({ reference: "order_123", priority: "normal" }, "third");
     expect(shortReference.status).toBe(400);
+
+    const oversized = await send(
+      { reference, priority: "normal", padding: "x".repeat(600) },
+      "oversized",
+    );
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toMatchObject({ error: { code: "PAYLOAD_TOO_LARGE" } });
+  });
+
+  it("applies the Hosted Event payload limit to authenticated test sends", async () => {
+    const projectId = await createProject();
+    await makeHosted(projectId);
+    const response = await app.request(`/v1/projects/${projectId}/events/test`, {
+      method: "POST",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "payment.success",
+        data: { padding: "x".repeat(17_000) },
+      }),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: "PAYLOAD_TOO_LARGE" } });
   });
 
   it("requires an Agent request and user approval before Hosted mode, then revokes wake tokens", async () => {

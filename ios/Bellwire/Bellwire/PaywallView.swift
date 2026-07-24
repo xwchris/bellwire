@@ -39,21 +39,17 @@ struct PaywallView: View {
                         .padding(.top, BellwireSpacing.page)
                         .paywallEntrance(appeared: appeared, delay: 0.12, reduceMotion: reduceMotion)
 
-                    privatePlanNote
-                        .padding(.top, BellwireSpacing.small)
-                        .paywallEntrance(appeared: appeared, delay: 0.15, reduceMotion: reduceMotion)
-
                     planOptions
                         .padding(.top, BellwireSpacing.roomy)
-                        .paywallEntrance(appeared: appeared, delay: 0.18, reduceMotion: reduceMotion)
+                        .paywallEntrance(appeared: appeared, delay: 0.16, reduceMotion: reduceMotion)
 
                     purchaseButton
                         .padding(.top, BellwireSpacing.roomy)
-                        .paywallEntrance(appeared: appeared, delay: 0.24, reduceMotion: reduceMotion)
+                        .paywallEntrance(appeared: appeared, delay: 0.22, reduceMotion: reduceMotion)
 
                     footer
                         .padding(.top, BellwireSpacing.standard)
-                        .paywallEntrance(appeared: appeared, delay: 0.30, reduceMotion: reduceMotion)
+                        .paywallEntrance(appeared: appeared, delay: 0.28, reduceMotion: reduceMotion)
                 }
                 .padding(.horizontal, BellwireSpacing.roomy)
                 .padding(.top, BellwireSpacing.compact)
@@ -62,11 +58,11 @@ struct PaywallView: View {
             .scrollIndicators(.hidden)
         }
         .task {
-            await model.captureProductEvent("paywall_viewed", source: "ios")
-            await purchaseManager.prepare()
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.38)) {
                 appeared = true
             }
+            await model.captureProductEvent("paywall_viewed", source: "ios")
+            await purchaseManager.prepare()
         }
         .onChange(of: purchaseManager.hasPro) { _, hasPro in
             if hasPro { dismiss() }
@@ -150,42 +146,13 @@ struct PaywallView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Upgrade capacity and history while keeping your privacy choices.")
+            Text("Pro expands Hosted capacity and history. Private delivery and 30 days on this iPhone stay free.")
                 .font(.subheadline)
                 .foregroundStyle(BellwireTheme.secondaryInk)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private var privatePlanNote: some View {
-        HStack(alignment: .top, spacing: BellwireSpacing.small) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(BellwireTheme.success)
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Private mode stays free")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(BellwireTheme.ink)
-                Text("Private delivery and 30 days of on-device history are included in every plan.")
-                    .font(.caption)
-                    .foregroundStyle(BellwireTheme.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(BellwireSpacing.standard)
-        .background(
-            BellwireTheme.success.opacity(0.08),
-            in: RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: BellwireRadius.card, style: .continuous)
-                .stroke(BellwireTheme.success.opacity(0.22), lineWidth: 1)
-        }
     }
 
     private var benefitCard: some View {
@@ -224,7 +191,7 @@ struct PaywallView: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: BellwireRadius.largeCard, style: .continuous)
-                .stroke(Color.white.opacity(0.09), lineWidth: 1)
+                .stroke(BellwireTheme.strongSeparator.opacity(0.48), lineWidth: 1)
         }
         .shadow(color: BellwireTheme.cardShadow, radius: 18, y: 8)
     }
@@ -245,9 +212,9 @@ struct PaywallView: View {
                             || (Self.isScreenshotPreview && plan == .yearly),
                         previewPrice: Self.isScreenshotPreview ? plan.previewPrice : nil,
                         previewMonthlyEquivalent: Self.isScreenshotPreview && plan == .yearly
-                            ? String(localized: "¥16.50")
+                            ? String(localized: "$2.50")
                             : nil,
-                        previewSavings: Self.isScreenshotPreview ? 41 : nil
+                        previewSavings: Self.isScreenshotPreview ? 37 : nil
                     )
                 }
                 .buttonStyle(PressableButtonStyle())
@@ -445,16 +412,21 @@ private struct PaywallPlanRow: View {
                     )
                     .frame(width: 28, height: 28)
 
-                if isSelected {
-                    Circle()
-                        .fill(BellwireTheme.accent)
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(BellwireTheme.accentInk)
-                }
+                Circle()
+                    .fill(BellwireTheme.accent)
+                    .frame(width: 28, height: 28)
+                    .opacity(isSelected ? 1 : 0)
+                    .scaleEffect(isSelected ? 1 : 0.25)
+                    .blur(radius: isSelected ? 0 : 4)
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(BellwireTheme.accentInk)
+                    .opacity(isSelected ? 1 : 0)
+                    .scaleEffect(isSelected ? 1 : 0.25)
+                    .blur(radius: isSelected ? 0 : 4)
             }
-            .animation(BellwireAnimation.quick, value: isSelected)
+            .animation(.spring(duration: 0.3, bounce: 0), value: isSelected)
         }
         .padding(.horizontal, BellwireSpacing.standard)
         .frame(minHeight: 82)

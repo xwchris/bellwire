@@ -63,6 +63,33 @@ describe("Apple billing verification", () => {
     });
   });
 
+  it("records purchase intent once but never treats background entitlement sync as a purchase", async () => {
+    const repository = new InMemoryBellwireRepository();
+    const analytics = { capture: vi.fn().mockResolvedValue(undefined) };
+    const trialVerifier = verifier({
+      verifyTransaction: vi.fn().mockResolvedValue(transaction({ offerType: 1 })),
+    });
+    const service = new AppleBillingService(repository, trialVerifier, () => now, analytics);
+
+    await service.submitTransaction(principal, signedValue, "sync");
+    expect(analytics.capture).not.toHaveBeenCalled();
+
+    await service.submitTransaction(principal, signedValue, "purchase");
+    expect(analytics.capture).toHaveBeenLastCalledWith(
+      userId,
+      "trial_started",
+      expect.objectContaining({ source: "purchase" }),
+    );
+
+    await service.submitTransaction(principal, signedValue, "restore");
+    expect(analytics.capture).toHaveBeenLastCalledWith(
+      userId,
+      "subscription_restored",
+      expect.objectContaining({ source: "restore" }),
+    );
+    expect(analytics.capture).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects another account token and an unknown product", async () => {
     const repository = new InMemoryBellwireRepository();
     const wrongAccount = verifier({
@@ -139,5 +166,32 @@ describe("Apple billing verification", () => {
       .processNotification(signedValue);
     expect(await repository.getAccountEntitlement(userId, now.toISOString()))
       .toMatchObject({ plan: "pro", status: "grace" });
+  });
+
+  it("does not let an older transaction from another subscription chain replace newer entitlement", async () => {
+    const repository = new InMemoryBellwireRepository();
+    const newer = verifier({
+      verifyTransaction: vi.fn().mockResolvedValue(transaction({
+        transactionId: "transaction-new",
+        originalTransactionId: "chain-new",
+        signedDate: Date.parse("2026-07-25T09:45:00Z"),
+      })),
+    });
+    await new AppleBillingService(repository, newer, () => now)
+      .submitTransaction(principal, signedValue);
+
+    const olderRevoked = verifier({
+      verifyTransaction: vi.fn().mockResolvedValue(transaction({
+        transactionId: "transaction-old",
+        originalTransactionId: "chain-old",
+        signedDate: Date.parse("2026-07-24T09:45:00Z"),
+        revocationDate: Date.parse("2026-07-24T09:46:00Z"),
+      })),
+    });
+    await new AppleBillingService(repository, olderRevoked, () => now)
+      .submitTransaction(principal, signedValue);
+
+    expect(await repository.getAccountEntitlement(userId, now.toISOString()))
+      .toMatchObject({ plan: "pro", status: "active" });
   });
 });

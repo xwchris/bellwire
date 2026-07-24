@@ -412,7 +412,7 @@ export function createApp(dependencies: {
       await dependencies.service.sendTestEvent(
         principal,
         context.req.param("projectId"),
-        (await readJson(context.req.raw)) as IngestEventInput,
+        (await readLimitedJson(context.req.raw, 16_384)) as IngestEventInput,
       ),
       201,
     );

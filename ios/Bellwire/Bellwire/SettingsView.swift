@@ -85,9 +85,13 @@ struct SettingsView: View {
                     body: feedbackBody
                 )
             }
-            .fullScreenCover(isPresented: $showsPaywall) {
+            .sheet(isPresented: $showsPaywall) {
                 PaywallView(appAccountToken: model.session.flatMap { UUID(uuidString: $0.user.id) })
                     .environmentObject(purchaseManager)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.hidden)
+                    .presentationCornerRadius(BellwireRadius.hero)
+                    .presentationBackground(BellwireTheme.background)
             }
             .alert("Feedback unavailable", isPresented: $showsFeedbackFallback) {
                 Button("Copy email") {

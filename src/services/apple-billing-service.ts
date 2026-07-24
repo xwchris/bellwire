@@ -111,19 +111,21 @@ export class AppleBillingService {
     const decoded = await this.verifier.verifyTransaction(value);
     const transaction = this.toTransaction(decoded, principal.userId);
     await this.repository.saveAppleTransaction(transaction);
-    await this.analytics?.capture(
-      principal.userId,
-      analyticsSource === "restore"
-        ? "subscription_restored"
-        : decoded.offerType === 1
-          ? "trial_started"
-          : "subscription_purchased",
-      {
-        plan: transaction.status === "active" || transaction.status === "grace" ? "pro" : "free",
-        productId: transaction.productId,
-        source: analyticsSource,
-      },
-    );
+    if (analyticsSource !== "sync") {
+      await this.analytics?.capture(
+        principal.userId,
+        analyticsSource === "restore"
+          ? "subscription_restored"
+          : decoded.offerType === 1
+            ? "trial_started"
+            : "subscription_purchased",
+        {
+          plan: transaction.status === "active" || transaction.status === "grace" ? "pro" : "free",
+          productId: transaction.productId,
+          source: analyticsSource,
+        },
+      );
+    }
     return this.repository.getAccountEntitlement(principal.userId, this.now().toISOString());
   }
 

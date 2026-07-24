@@ -131,6 +131,7 @@ create table public.billing_entitlements (
   original_transaction_id text unique,
   expires_at timestamptz,
   downgrade_deadline timestamptz,
+  latest_signed_date timestamptz not null,
   updated_at timestamptz not null default now()
 );
 
@@ -329,7 +330,8 @@ begin
   ) returning * into saved;
 
   update public.monthly_signal_usage
-  set accepted_signals = accepted_signals + 1, updated_at = p_received_at
+  set accepted_signals = monthly_signal_usage.accepted_signals + 1,
+      updated_at = p_received_at
   where user_id = owner_id and month_start = period_start
   returning monthly_signal_usage.accepted_signals into current_usage;
 
@@ -418,7 +420,8 @@ begin
   ) returning * into saved;
 
   update public.monthly_signal_usage
-  set accepted_signals = accepted_signals + 1, updated_at = p_received_at
+  set accepted_signals = monthly_signal_usage.accepted_signals + 1,
+      updated_at = p_received_at
   where user_id = owner_id and month_start = period_start
   returning monthly_signal_usage.accepted_signals into current_usage;
 
@@ -543,7 +546,8 @@ begin
   end if;
 
   update public.monthly_signal_usage
-  set accepted_signals = accepted_signals + 1, updated_at = p_updated_at
+  set accepted_signals = monthly_signal_usage.accepted_signals + 1,
+      updated_at = p_updated_at
   where user_id = owner_id and month_start = period_start
   returning monthly_signal_usage.accepted_signals into current_usage;
 
@@ -692,7 +696,7 @@ begin
   if latest_signed_date = p_signed_date then
     insert into public.billing_entitlements(
       user_id, plan, status, product_id, original_transaction_id,
-      expires_at, downgrade_deadline, updated_at
+      expires_at, downgrade_deadline, latest_signed_date, updated_at
     ) values (
       p_user_id,
       case when p_status in ('active', 'grace') then 'pro' else 'free' end,
@@ -702,6 +706,7 @@ begin
       p_expires_at,
       case when p_status in ('expired', 'revoked')
         then p_updated_at + interval '7 days' else null end,
+      p_signed_date,
       p_updated_at
     )
     on conflict (user_id) do update
@@ -711,7 +716,9 @@ begin
         original_transaction_id = excluded.original_transaction_id,
         expires_at = excluded.expires_at,
         downgrade_deadline = excluded.downgrade_deadline,
-        updated_at = excluded.updated_at;
+        latest_signed_date = excluded.latest_signed_date,
+        updated_at = excluded.updated_at
+    where excluded.latest_signed_date >= billing_entitlements.latest_signed_date;
   end if;
 end;
 $$;

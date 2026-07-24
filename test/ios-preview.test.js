@@ -83,4 +83,18 @@ describe("iOS Inbox preview", () => {
     expect(logoBackground).toBeGreaterThan(successBranch);
     expect(logoBackground).toBeLessThan(asyncImageEnd);
   });
+
+  it("presents the paywall immediately while StoreKit loads in a large sheet", () => {
+    const paywall = readFileSync("ios/Bellwire/Bellwire/PaywallView.swift", "utf8");
+    const settings = readFileSync("ios/Bellwire/Bellwire/SettingsView.swift", "utf8");
+    const details = readFileSync("ios/Bellwire/Bellwire/DetailViews.swift", "utf8");
+
+    expect(paywall.indexOf("appeared = true")).toBeLessThan(
+      paywall.indexOf("await purchaseManager.prepare()"),
+    );
+    expect(settings).toContain(".sheet(isPresented: $showsPaywall)");
+    expect(details).toContain(".sheet(isPresented: $showsPaywall)");
+    expect(settings).toContain(".presentationCornerRadius(BellwireRadius.hero)");
+    expect(details).toContain(".presentationCornerRadius(BellwireRadius.hero)");
+  });
 });
