@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import {
-  Environment,
+import type {
+  JWSTransactionDecodedPayload,
+  ResponseBodyV2DecodedPayload,
   SignedDataVerifier,
-  Status,
-  type JWSTransactionDecodedPayload,
-  type ResponseBodyV2DecodedPayload,
 } from "@apple/app-store-server-library";
 
 import type {
@@ -20,6 +18,17 @@ const PRODUCT_IDS = new Set([
   "app.bellwire.pro.monthly",
   "app.bellwire.pro.yearly",
 ]);
+const APPLE_ENVIRONMENT = {
+  production: "Production",
+  sandbox: "Sandbox",
+} as const;
+const APPLE_SUBSCRIPTION_STATUS = {
+  active: 1,
+  expired: 2,
+  billingRetry: 3,
+  billingGracePeriod: 4,
+  revoked: 5,
+} as const;
 
 export class AppleBillingVerificationError extends Error {
   constructor(message: string) {
@@ -34,7 +43,11 @@ export interface AppleBillingVerifier {
 }
 
 export class OfficialAppleBillingVerifier implements AppleBillingVerifier {
-  private readonly verifiers: SignedDataVerifier[];
+  private readonly roots: Buffer[];
+  private readonly onlineChecks: boolean;
+  private readonly bundleId: string;
+  private readonly appAppleId: number;
+  private verifiersPromise?: Promise<SignedDataVerifier[]>;
 
   constructor(configuration: {
     rootCertificatesBase64: string[];
@@ -45,24 +58,11 @@ export class OfficialAppleBillingVerifier implements AppleBillingVerifier {
     if (configuration.rootCertificatesBase64.length === 0) {
       throw new Error("At least one Apple root certificate is required");
     }
-    const roots = configuration.rootCertificatesBase64.map((value) =>
+    this.roots = configuration.rootCertificatesBase64.map((value) =>
       Buffer.from(value.replace(/\s+/gu, ""), "base64"));
-    const onlineChecks = configuration.enableOnlineChecks !== false;
-    this.verifiers = [
-      new SignedDataVerifier(
-        roots,
-        onlineChecks,
-        Environment.PRODUCTION,
-        configuration.bundleId,
-        configuration.appAppleId,
-      ),
-      new SignedDataVerifier(
-        roots,
-        onlineChecks,
-        Environment.SANDBOX,
-        configuration.bundleId,
-      ),
-    ];
+    this.onlineChecks = configuration.enableOnlineChecks !== false;
+    this.bundleId = configuration.bundleId;
+    this.appAppleId = configuration.appAppleId;
   }
 
   async verifyTransaction(value: string): Promise<JWSTransactionDecodedPayload> {
@@ -77,7 +77,7 @@ export class OfficialAppleBillingVerifier implements AppleBillingVerifier {
     operation: (verifier: SignedDataVerifier) => Promise<T>,
   ): Promise<T> {
     let failure: unknown;
-    for (const verifier of this.verifiers) {
+    for (const verifier of await this.verifiers()) {
       try {
         return await operation(verifier);
       } catch (error) {
@@ -87,6 +87,35 @@ export class OfficialAppleBillingVerifier implements AppleBillingVerifier {
     throw new AppleBillingVerificationError(
       failure instanceof Error ? failure.message : "Apple signed data verification failed",
     );
+  }
+
+  private verifiers(): Promise<SignedDataVerifier[]> {
+    this.verifiersPromise ??= this.createVerifiers();
+    return this.verifiersPromise;
+  }
+
+  private async createVerifiers(): Promise<SignedDataVerifier[]> {
+    // Apple's package initializes jsrsasign, including randomness, at module load.
+    // Cloudflare Workers permits that work inside a request but rejects it in
+    // global scope, so keep this import lazy and request-bound.
+    const { Environment, SignedDataVerifier } = await import(
+      "@apple/app-store-server-library"
+    );
+    return [
+      new SignedDataVerifier(
+        this.roots,
+        this.onlineChecks,
+        Environment.PRODUCTION,
+        this.bundleId,
+        this.appAppleId,
+      ),
+      new SignedDataVerifier(
+        this.roots,
+        this.onlineChecks,
+        Environment.SANDBOX,
+        this.bundleId,
+      ),
+    ];
   }
 }
 
@@ -185,7 +214,10 @@ export class AppleBillingService {
       throw new AppleBillingVerificationError("The transaction product is not a Bellwire Pro plan");
     }
     const environment = payload.environment;
-    if (environment !== Environment.PRODUCTION && environment !== Environment.SANDBOX) {
+    if (
+      environment !== APPLE_ENVIRONMENT.production &&
+      environment !== APPLE_ENVIRONMENT.sandbox
+    ) {
       throw new AppleBillingVerificationError("The transaction environment is invalid");
     }
     const now = this.now().getTime();
@@ -224,11 +256,11 @@ function readTransactionSource(value: unknown): "purchase" | "restore" | "sync" 
 
 function entitlementStatusFromApple(value: unknown): EntitlementStatus | undefined {
   switch (value) {
-    case Status.ACTIVE: return "active";
-    case Status.BILLING_RETRY:
-    case Status.BILLING_GRACE_PERIOD: return "grace";
-    case Status.REVOKED: return "revoked";
-    case Status.EXPIRED: return "expired";
+    case APPLE_SUBSCRIPTION_STATUS.active: return "active";
+    case APPLE_SUBSCRIPTION_STATUS.billingRetry:
+    case APPLE_SUBSCRIPTION_STATUS.billingGracePeriod: return "grace";
+    case APPLE_SUBSCRIPTION_STATUS.revoked: return "revoked";
+    case APPLE_SUBSCRIPTION_STATUS.expired: return "expired";
     default: return undefined;
   }
 }
