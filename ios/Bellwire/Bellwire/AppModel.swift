@@ -246,8 +246,12 @@ final class AppModel: ObservableObject {
         guard let userID = session?.user.id else { return }
         let storedDirectConnections = keychain.directConnectionManifests(userID: userID)
         let directProjectIDs = Set(storedDirectConnections.map(\.project.id))
-        let cachedDirectProjects = projects.filter { directProjectIDs.contains($0.id) }
-        let cachedDirectSurfaces = liveSurfaces.filter { directProjectIDs.contains($0.projectId) }
+        let cachedDirectProjects = deduplicatedProjects(
+            projects.filter { directProjectIDs.contains($0.id) }
+        )
+        let cachedDirectSurfaces = deduplicatedSurfaces(
+            liveSurfaces.filter { directProjectIDs.contains($0.projectId) }
+        )
         do {
             async let projectRequest: ProjectsResponse = api.request("v1/projects")
             async let surfaceRequest: LiveSurfacesResponse = api.request("v1/surfaces")
@@ -277,8 +281,14 @@ final class AppModel: ObservableObject {
                 if left.displayOrder != right.displayOrder { return left.displayOrder < right.displayOrder }
                 return left.id < right.id
             }
-            projects = (orderedProjects + cachedDirectProjects).sorted(by: stableProjectOrder)
-            liveSurfaces = orderedSurfaces + cachedDirectSurfaces
+            let cloudProjects = orderedProjects.filter { !directProjectIDs.contains($0.id) }
+            let cloudSurfaces = orderedSurfaces.filter { !directProjectIDs.contains($0.projectId) }
+            projects = deduplicatedProjects(cloudProjects + cachedDirectProjects)
+                .sorted(by: stableProjectOrder)
+            liveSurfaces = sortedSurfaces(
+                deduplicatedSurfaces(cloudSurfaces + cachedDirectSurfaces),
+                projects: projects
+            )
             events = inboxResponse.events
             devices = deviceResponse.devices
             agentConnections = connectionResponse.connections
@@ -342,6 +352,42 @@ final class AppModel: ObservableObject {
     private func stableProjectOrder(_ left: ProjectSummary, _ right: ProjectSummary) -> Bool {
         if left.displayOrder != right.displayOrder { return left.displayOrder < right.displayOrder }
         return left.id < right.id
+    }
+
+    private func deduplicatedProjects(_ values: [ProjectSummary]) -> [ProjectSummary] {
+        var projectsByID: [String: ProjectSummary] = [:]
+        for project in values {
+            projectsByID[project.id] = project
+        }
+        return Array(projectsByID.values)
+    }
+
+    private func deduplicatedSurfaces(_ values: [LiveSurfaceRecord]) -> [LiveSurfaceRecord] {
+        var surfacesByKey: [String: LiveSurfaceRecord] = [:]
+        for surface in values {
+            surfacesByKey["\(surface.projectId):\(surface.surfaceKey)"] = surface
+        }
+        return Array(surfacesByKey.values)
+    }
+
+    private func sortedSurfaces(
+        _ values: [LiveSurfaceRecord],
+        projects: [ProjectSummary]
+    ) -> [LiveSurfaceRecord] {
+        let projectOrders = Dictionary(
+            uniqueKeysWithValues: projects.map { ($0.id, $0.displayOrder) }
+        )
+        return values.sorted { left, right in
+            let leftProjectOrder = projectOrders[left.projectId] ?? Int.max
+            let rightProjectOrder = projectOrders[right.projectId] ?? Int.max
+            if leftProjectOrder != rightProjectOrder {
+                return leftProjectOrder < rightProjectOrder
+            }
+            if left.displayOrder != right.displayOrder {
+                return left.displayOrder < right.displayOrder
+            }
+            return left.id < right.id
+        }
     }
 
     @discardableResult
@@ -616,25 +662,14 @@ final class AppModel: ObservableObject {
                 manifest: manifest,
                 identity: identity
             ) else { continue }
-            projects.removeAll { $0.id == result.project.id }
-            projects.append(result.project)
-            projects.sort(by: stableProjectOrder)
-            liveSurfaces.removeAll { $0.projectId == result.project.id }
-            liveSurfaces.append(contentsOf: result.surfaces)
-            let projectOrders = Dictionary(
-                uniqueKeysWithValues: projects.map { ($0.id, $0.displayOrder) }
+            let nextProjects = deduplicatedProjects(
+                projects.filter { $0.id != result.project.id } + [result.project]
+            ).sorted(by: stableProjectOrder)
+            let nextSurfaces = deduplicatedSurfaces(
+                liveSurfaces.filter { $0.projectId != result.project.id } + result.surfaces
             )
-            liveSurfaces.sort { left, right in
-                let leftProjectOrder = projectOrders[left.projectId] ?? Int.max
-                let rightProjectOrder = projectOrders[right.projectId] ?? Int.max
-                if leftProjectOrder != rightProjectOrder {
-                    return leftProjectOrder < rightProjectOrder
-                }
-                if left.displayOrder != right.displayOrder {
-                    return left.displayOrder < right.displayOrder
-                }
-                return left.id < right.id
-            }
+            projects = nextProjects
+            liveSurfaces = sortedSurfaces(nextSurfaces, projects: nextProjects)
         }
     }
 
