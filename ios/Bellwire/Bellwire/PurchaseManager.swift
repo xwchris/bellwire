@@ -15,17 +15,19 @@ enum BellwirePurchasePlan: String, CaseIterable, Identifiable {
         }
     }
 
-    var title: String {
+    func title(locale: Locale) -> String {
         switch self {
-        case .yearly: return String(localized: "Yearly")
-        case .monthly: return String(localized: "Monthly")
+        case .yearly: return String(localized: "Yearly", locale: locale)
+        case .monthly: return String(localized: "Monthly", locale: locale)
         }
     }
 
-    var renewalDescription: String {
+    func renewalDescription(locale: Locale) -> String {
         switch self {
-        case .yearly: return String(localized: "Billed yearly · best value")
-        case .monthly: return String(localized: "Renews every month")
+        case .yearly:
+            return String(localized: "Billed yearly · best value", locale: locale)
+        case .monthly:
+            return String(localized: "Renews every month", locale: locale)
         }
     }
 }
@@ -117,7 +119,7 @@ final class PurchaseManager: ObservableObject {
             eligibleTrialProductIDs = eligibleTrials
         } catch {
             loadState = .unavailable
-            errorMessage = String(localized: "Bellwire Pro products are temporarily unavailable. Please try again.")
+            errorMessage = "Bellwire Pro products are temporarily unavailable. Please try again."
         }
     }
 
@@ -144,14 +146,14 @@ final class PurchaseManager: ObservableObject {
                 BellwireHaptics.success()
                 return true
             case .pending:
-                errorMessage = String(localized: "Your purchase is pending approval.")
+                errorMessage = "Your purchase is pending approval."
             case .userCancelled:
                 break
             @unknown default:
-                errorMessage = String(localized: "The purchase could not be completed.")
+                errorMessage = "The purchase could not be completed."
             }
         } catch {
-            errorMessage = String(localized: "The purchase could not be completed. Please try again.")
+            errorMessage = "The purchase could not be completed. Please try again."
             BellwireHaptics.error()
         }
 
@@ -171,10 +173,10 @@ final class PurchaseManager: ObservableObject {
             if hasPro {
                 BellwireHaptics.success()
             } else {
-                errorMessage = String(localized: "No previous Bellwire Pro purchase was found.")
+                errorMessage = "No previous Bellwire Pro purchase was found."
             }
         } catch {
-            errorMessage = String(localized: "Purchases could not be restored. Please try again.")
+            errorMessage = "Purchases could not be restored. Please try again."
             BellwireHaptics.error()
         }
     }
@@ -192,7 +194,7 @@ final class PurchaseManager: ObservableObject {
             do {
                 try await upload(entitlement.jwsRepresentation, source: source)
             } catch {
-                errorMessage = String(localized: "Your App Store purchase could not be synced with Bellwire.")
+                errorMessage = "Your App Store purchase could not be synced with Bellwire."
             }
         }
 
@@ -205,7 +207,7 @@ final class PurchaseManager: ObservableObject {
             try await upload(result.jwsRepresentation, source: "sync")
             await transaction.finish()
         } catch {
-            errorMessage = String(localized: "Your App Store purchase could not be synced with Bellwire.")
+            errorMessage = "Your App Store purchase could not be synced with Bellwire."
             return
         }
         await refreshEntitlements()
@@ -218,7 +220,7 @@ final class PurchaseManager: ObservableObject {
             serverEntitlement = try await entitlementLoader()
         } catch {
             if serverEntitlement == nil {
-                errorMessage = String(localized: "Bellwire could not refresh your plan status.")
+                errorMessage = "Bellwire could not refresh your plan status."
             }
         }
     }

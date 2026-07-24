@@ -213,11 +213,11 @@
 "Opens Bellwire Pro purchase options" = "打开 Bellwire Pro 购买选项";
 "Close" = "关闭";
 "More room for every signal." = "让每个重要信号都有位置。";
-"Pro expands Hosted capacity and history. Private delivery and 30 days on this iPhone stay free." = "Pro 扩展 Hosted 容量与历史记录；Private 推送和本机 30 天记录始终免费。";
+"Pro expands Hosted capacity and history. Private delivery and 30 days on this iPhone stay free." = "专业版扩展云端托管容量与历史记录；隐私直连推送和本机 30 天记录始终免费。";
 "Up to 20 connected projects" = "最多连接 20 个项目";
-"50,000 Signals every month" = "每月 50,000 条 Signal";
-"Keep 3 iPhones in sync" = "同步 3 台 iPhone";
-"90 days of Hosted history" = "保留 90 天 Hosted 历史";
+"50,000 Signals every month" = "每月 50,000 条信号";
+"Keep 3 iPhones in sync" = "最多同步 3 台设备";
+"90 days of Hosted history" = "保留 90 天云端托管历史";
 "10 custom Surfaces per project" = "每个项目最多 10 张自定义卡片";
 "Widgets, Live Activities, export, and diagnostics" = "桌面小组件、实时活动、导出与诊断";
 "Yearly" = "年度";
@@ -243,6 +243,8 @@
 "The purchase could not be completed. Please try again." = "未能完成购买，请重试。";
 "No previous Bellwire Pro purchase was found." = "没有找到可恢复的 Bellwire Pro 购买记录。";
 "Purchases could not be restored. Please try again." = "未能恢复购买，请重试。";
+"Your App Store purchase could not be synced with Bellwire." = "未能将你的 App Store 购买记录同步到 Bellwire。";
+"Bellwire could not refresh your plan status." = "Bellwire 暂时无法刷新你的套餐状态。";
 "Opens App Store subscription management" = "打开 App Store 订阅管理";
 "Plan & usage" = "套餐与用量";
 "Private" = "私密";

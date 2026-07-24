@@ -101,6 +101,8 @@
 "The purchase could not be completed. Please try again." = "The purchase could not be completed. Please try again.";
 "No previous Bellwire Pro purchase was found." = "No previous Bellwire Pro purchase was found.";
 "Purchases could not be restored. Please try again." = "Purchases could not be restored. Please try again.";
+"Your App Store purchase could not be synced with Bellwire." = "Your App Store purchase could not be synced with Bellwire.";
+"Bellwire could not refresh your plan status." = "Bellwire could not refresh your plan status.";
 "Opens App Store subscription management" = "Opens App Store subscription management";
 "Plan & usage" = "Plan & usage";
 "Private" = "Private";

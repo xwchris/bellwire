@@ -86,6 +86,14 @@ describe("iOS Inbox preview", () => {
 
   it("presents the paywall immediately while StoreKit loads in a large sheet", () => {
     const paywall = readFileSync("ios/Bellwire/Bellwire/PaywallView.swift", "utf8");
+    const purchases = readFileSync(
+      "ios/Bellwire/Bellwire/PurchaseManager.swift",
+      "utf8",
+    );
+    const chinese = readFileSync(
+      "ios/Bellwire/Bellwire/zh-Hans.lproj/Localizable.strings",
+      "utf8",
+    );
     const settings = readFileSync("ios/Bellwire/Bellwire/SettingsView.swift", "utf8");
     const details = readFileSync("ios/Bellwire/Bellwire/DetailViews.swift", "utf8");
 
@@ -96,5 +104,15 @@ describe("iOS Inbox preview", () => {
     expect(details).toContain(".sheet(isPresented: $showsPaywall)");
     expect(settings).toContain(".presentationCornerRadius(BellwireRadius.hero)");
     expect(details).toContain(".presentationCornerRadius(BellwireRadius.hero)");
+    expect(paywall).toContain("@Environment(\\.locale) private var locale");
+    expect(paywall).toContain(
+      'String(localized: "Continue with yearly", locale: locale)',
+    );
+    expect(paywall).toContain("Text(LocalizedStringKey(errorMessage))");
+    expect(purchases).toContain("func title(locale: Locale) -> String");
+    expect(purchases).not.toContain("errorMessage = String(localized:");
+    expect(chinese).toContain(
+      '"Bellwire could not refresh your plan status." = "Bellwire 暂时无法刷新你的套餐状态。";',
+    );
   });
 });

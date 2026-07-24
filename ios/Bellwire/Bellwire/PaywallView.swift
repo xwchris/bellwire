@@ -7,6 +7,7 @@ struct PaywallView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     @Environment(\.openURL) private var openURL
     @State private var selectedPlan = BellwirePurchasePlan.yearly
     @State private var appeared = false
@@ -212,7 +213,7 @@ struct PaywallView: View {
                             || (Self.isScreenshotPreview && plan == .yearly),
                         previewPrice: Self.isScreenshotPreview ? plan.previewPrice : nil,
                         previewMonthlyEquivalent: Self.isScreenshotPreview && plan == .yearly
-                            ? String(localized: "$2.50")
+                            ? String(localized: "$2.50", locale: locale)
                             : nil,
                         previewSavings: Self.isScreenshotPreview ? 37 : nil
                     )
@@ -226,7 +227,7 @@ struct PaywallView: View {
     private var purchaseButton: some View {
         VStack(spacing: BellwireSpacing.small) {
             if let errorMessage = purchaseManager.errorMessage {
-                Text(errorMessage)
+                Text(LocalizedStringKey(errorMessage))
                     .font(.caption)
                     .foregroundStyle(BellwireTheme.danger)
                     .multilineTextAlignment(.center)
@@ -317,18 +318,20 @@ struct PaywallView: View {
 
     private var primaryButtonTitle: String {
         if purchaseManager.loadState == .loading {
-            return String(localized: "Loading App Store…")
+            return String(localized: "Loading App Store…", locale: locale)
         }
         if purchaseManager.isTrialEligible(for: selectedPlan)
             || (Self.isScreenshotPreview && selectedPlan == .yearly) {
-            return String(localized: "Start free trial")
+            return String(localized: "Start free trial", locale: locale)
         }
         if selectedProduct == nil {
-            return String(localized: "Try again")
+            return String(localized: "Try again", locale: locale)
         }
         switch selectedPlan {
-        case .yearly: return String(localized: "Continue with yearly")
-        case .monthly: return String(localized: "Continue with monthly")
+        case .yearly:
+            return String(localized: "Continue with yearly", locale: locale)
+        case .monthly:
+            return String(localized: "Continue with monthly", locale: locale)
         }
     }
 
@@ -351,6 +354,8 @@ struct PaywallView: View {
 }
 
 private struct PaywallPlanRow: View {
+    @Environment(\.locale) private var locale
+
     let plan: BellwirePurchasePlan
     let product: Product?
     let monthlyProduct: Product?
@@ -364,7 +369,7 @@ private struct PaywallPlanRow: View {
         HStack(spacing: BellwireSpacing.standard) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: BellwireSpacing.compact) {
-                    Text(plan.title)
+                    Text(plan.title(locale: locale))
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(BellwireTheme.ink)
 
@@ -446,30 +451,42 @@ private struct PaywallPlanRow: View {
 
     private var detailText: String {
         if showsTrial && plan == .yearly {
-            return String(localized: "7-day free trial · then billed yearly")
+            return String(
+                localized: "7-day free trial · then billed yearly",
+                locale: locale
+            )
         }
         guard plan == .yearly,
               let equivalent = previewMonthlyEquivalent
                 ?? product.flatMap(monthlyEquivalent(for:)) else {
-            return plan.renewalDescription
+            return plan.renewalDescription(locale: locale)
         }
         return String(
-            format: String(localized: "%@ per month · billed yearly"),
+            format: String(
+                localized: "%@ per month · billed yearly",
+                locale: locale
+            ),
             equivalent
         )
     }
 
     private var savingsLabel: String {
         if let previewSavings {
-            return String(format: String(localized: "SAVE %d%%"), previewSavings)
+            return String(
+                format: String(localized: "SAVE %d%%", locale: locale),
+                previewSavings
+            )
         }
         guard let yearly = product,
               let monthly = monthlyProduct,
               let percentage = savingsPercentage(yearly: yearly, monthly: monthly),
               percentage > 0 else {
-            return String(localized: "BEST VALUE")
+            return String(localized: "BEST VALUE", locale: locale)
         }
-        return String(format: String(localized: "SAVE %d%%"), percentage)
+        return String(
+            format: String(localized: "SAVE %d%%", locale: locale),
+            percentage
+        )
     }
 
     private func monthlyEquivalent(for product: Product) -> String? {
@@ -488,8 +505,8 @@ private struct PaywallPlanRow: View {
 private extension BellwirePurchasePlan {
     var previewPrice: String {
         switch self {
-        case .yearly: return String(localized: "$29.99")
-        case .monthly: return String(localized: "$3.99")
+        case .yearly: return "$29.99"
+        case .monthly: return "$3.99"
         }
     }
 }
