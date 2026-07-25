@@ -567,7 +567,7 @@ export class BellwireService {
     }
     const now = new Date();
     try {
-      return await this.repository.saveDeliveryModeChangeRequest({
+      const request = await this.repository.saveDeliveryModeChangeRequest({
         id: crypto.randomUUID(),
         projectId,
         userId: principal.userId,
@@ -578,6 +578,17 @@ export class BellwireService {
         createdAt: now.toISOString(),
         expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
       });
+      if (this.deliveryDispatcher) {
+        try {
+          await this.deliveryDispatcher.enqueueModeRequest(request, project);
+        } catch (error) {
+          console.error(
+            "Mode request notification enqueue failed",
+            error instanceof Error ? error.message : "Unknown error",
+          );
+        }
+      }
+      return request;
     } catch (error) {
       if (error instanceof Error && /pending/iu.test(error.message)) {
         throw new ServiceError(

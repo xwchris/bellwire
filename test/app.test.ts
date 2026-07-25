@@ -44,6 +44,7 @@ const validEvent = {
 class CapturingDispatcher implements DeliveryDispatcher {
   readonly eventIds: string[] = [];
   readonly wakeIds: string[] = [];
+  readonly modeRequestIds: string[] = [];
 
   async enqueue(event: { id: string }): Promise<void> {
     this.eventIds.push(event.id);
@@ -51,6 +52,10 @@ class CapturingDispatcher implements DeliveryDispatcher {
 
   async enqueuePrivateWake(wake: { id: string }): Promise<void> {
     this.wakeIds.push(wake.id);
+  }
+
+  async enqueueModeRequest(request: { id: string }): Promise<void> {
+    this.modeRequestIds.push(request.id);
   }
 }
 
@@ -60,6 +65,10 @@ class FailingDispatcher implements DeliveryDispatcher {
   }
 
   async enqueuePrivateWake(): Promise<void> {
+    throw new Error("Queue quota exceeded");
+  }
+
+  async enqueueModeRequest(): Promise<void> {
     throw new Error("Queue quota exceeded");
   }
 }
@@ -293,6 +302,7 @@ describe("Bellwire MVP API", () => {
     });
     expect(requested.status).toBe(201);
     const request = await requested.json<{ id: string }>();
+    expect(dispatcher.modeRequestIds).toEqual([request.id]);
 
     const approved = await app.request(`/v1/delivery-mode-requests/${request.id}/approve`, {
       method: "POST",

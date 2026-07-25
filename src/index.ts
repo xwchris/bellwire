@@ -12,6 +12,7 @@ import {
 } from "./services/apple-billing-service";
 import { ApnsClient } from "./services/apns-client";
 import { DeliveryProcessor } from "./services/delivery-processor";
+import { ModeRequestNotificationProcessor } from "./services/mode-request-notification-processor";
 import { PrivateWakeProcessor } from "./services/private-wake-processor";
 import {
   PostHogProductAnalytics,
@@ -95,11 +96,24 @@ export default {
         environment,
       }),
     );
+    const modeRequestProcessor = new ModeRequestNotificationProcessor(
+      repository,
+      (environment) => new ApnsClient({
+        keyId: requiredEnv(env.APNS_KEY_ID, "APNS_KEY_ID"),
+        teamId: requiredEnv(env.APNS_TEAM_ID, "APNS_TEAM_ID"),
+        bundleId: requiredEnv(env.APNS_BUNDLE_ID, "APNS_BUNDLE_ID"),
+        urlScheme: env.APP_URL_SCHEME ?? "bellwire",
+        privateKey: requiredEnv(env.APNS_PRIVATE_KEY, "APNS_PRIVATE_KEY"),
+        environment,
+      }),
+    );
     await Promise.all(
       batch.messages.map(async (message) => {
         try {
           if (message.body.kind === "private_wake") {
             await privateWakeProcessor.process(message.body.wakeId);
+          } else if (message.body.kind === "mode_request") {
+            await modeRequestProcessor.process(message.body.requestId, message.body.userId);
           } else {
             await processor.process(message.body.eventId);
           }

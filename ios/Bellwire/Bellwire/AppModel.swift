@@ -32,6 +32,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var agentConnections: [AgentConnectionRecord] = []
     @Published private(set) var entitlement: AccountEntitlement?
     @Published private(set) var pendingModeRequests: [DeliveryModeChangeRequest] = []
+    @Published private(set) var resolvingModeRequestID: String?
+    @Published private(set) var modeRequestErrors: [String: String] = [:]
     @Published private(set) var privateSyncErrors: [String: String] = [:]
     @Published private(set) var privateLastSyncAt: [String: Date] = [:]
     @Published private(set) var revokingAgentConnectionID: String?
@@ -44,6 +46,7 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var binding: BindingResponse?
     @Published var pendingEventID: String?
+    @Published var pendingModeRequestNavigation = false
 
     private let keychain = KeychainStore()
     private let privateEventStore = PrivateEventStore()
@@ -569,7 +572,25 @@ final class AppModel: ObservableObject {
         return value
     }
 
+    func refreshPendingModeRequests() async {
+        guard isAuthenticated else { return }
+        do {
+            let response: DeliveryModeChangeRequestsResponse = try await api.request(
+                "v1/delivery-mode-requests?status=pending"
+            )
+            pendingModeRequests = response.requests
+            let pendingIDs = Set(response.requests.map(\.id))
+            modeRequestErrors = modeRequestErrors.filter { pendingIDs.contains($0.key) }
+        } catch {
+            errorMessage = friendlyMessage(error)
+        }
+    }
+
     func resolveModeRequest(id: String, approve: Bool) async {
+        guard resolvingModeRequestID == nil else { return }
+        resolvingModeRequestID = id
+        modeRequestErrors.removeValue(forKey: id)
+        defer { resolvingModeRequestID = nil }
         do {
             let _: DeliveryModeChangeRequest = try await api.request(
                 "v1/delivery-mode-requests/\(id)/\(approve ? "approve" : "reject")",
@@ -579,7 +600,15 @@ final class AppModel: ObservableObject {
             await loadDashboard()
             BellwireHaptics.success()
         } catch {
-            errorMessage = friendlyMessage(error)
+            if case ClientError.api(let code, _) = error,
+               code == "PRIVATE_READINESS_REQUIRED" {
+                modeRequestErrors[id] = String(
+                    localized: "Finish the Direct connection on this iPhone before enabling Private delivery."
+                )
+            } else {
+                modeRequestErrors[id] = friendlyMessage(error)
+            }
+            BellwireHaptics.error()
         }
     }
 
@@ -745,6 +774,14 @@ final class AppModel: ObservableObject {
 
     func handleDeepLink(_ url: URL) {
         guard url.scheme == AppConfig.urlScheme else { return }
+        if url.host == "settings",
+           url.pathComponents.dropFirst().first == "mode-requests" {
+            pendingModeRequestNavigation = true
+            Task { @MainActor [weak self] in
+                await self?.refreshPendingModeRequests()
+            }
+            return
+        }
         if url.host == "events" {
             let id = url.pathComponents.dropFirst().first
             if let id, !id.isEmpty { pendingEventID = id }
@@ -832,11 +869,14 @@ final class AppModel: ObservableObject {
         agentConnections = []
         entitlement = nil
         pendingModeRequests = []
+        resolvingModeRequestID = nil
+        modeRequestErrors = [:]
         privateSyncErrors = [:]
         privateLastSyncAt = [:]
         revokingAgentConnectionID = nil
         binding = nil
         pendingEventID = nil
+        pendingModeRequestNavigation = false
         lastDashboardRefreshAt = nil
         isLoading = false
         Task { await NativeDisplayManager.shared.clear() }

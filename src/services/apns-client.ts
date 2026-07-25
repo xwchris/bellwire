@@ -24,6 +24,10 @@ export interface ApnsNotification {
   eventId?: string;
   wakeId?: string;
   reference?: string;
+  modeRequest?: {
+    id: string;
+    toMode: "private" | "hosted";
+  };
 }
 
 export interface ApnsResult {
@@ -66,7 +70,13 @@ export class ApnsClient {
       },
       body: JSON.stringify({
         aps: {
-          alert: notification.deliveryMode === "hosted"
+          alert: notification.modeRequest
+            ? {
+                title: notification.title ?? "Approval needed",
+                body: notification.body ?? "Open Bellwire to review this request.",
+                ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
+              }
+            : notification.deliveryMode === "hosted"
             ? {
                 title: notification.title ?? "Bellwire",
                 body: notification.body ?? "",
@@ -85,6 +95,14 @@ export class ApnsClient {
         projectId: notification.projectId,
         bellwireDeliveryMode: notification.deliveryMode,
         protocolVersion: 2,
+        ...(notification.modeRequest
+          ? {
+              bellwireControlAction: "mode_request",
+              modeRequestId: notification.modeRequest.id,
+              requestedDeliveryMode: notification.modeRequest.toMode,
+              deepLink: `${this.config.urlScheme}://settings/mode-requests`,
+            }
+          : {}),
         ...(notification.deliveryMode === "hosted" && notification.eventId
           ? {
               eventId: notification.eventId,

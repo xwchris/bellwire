@@ -67,6 +67,9 @@ struct SettingsView: View {
                 await model.refreshNotificationStatus()
                 await model.loadDashboard()
             }
+            .task {
+                await model.refreshPendingModeRequests()
+            }
             .sheet(item: $model.binding) { binding in
                 BindingCodeSheet(binding: binding)
                     .presentationDetents([.large])
@@ -383,6 +386,10 @@ struct SettingsView: View {
                     )
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(BellwireTheme.ink)
+                    if let project = model.projects.first(where: { $0.id == request.projectId }) {
+                        Text(project.name)
+                            .bellwireTechnicalLabel()
+                    }
                     Text(
                         request.toMode == .hosted
                             ? "Bellwire Cloud will receive and retain this project's Event, Inbox, Surface, and detailed notification content."
@@ -391,18 +398,33 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(BellwireTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
+                    if let error = model.modeRequestErrors[request.id] {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(BellwireTheme.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(spacing: BellwireSpacing.small) {
                         Button("Reject", role: .cancel) {
                             Task { await model.resolveModeRequest(id: request.id, approve: false) }
                         }
                         .buttonStyle(.bordered)
-                        Button("Approve") {
+                        Button {
                             Task { await model.resolveModeRequest(id: request.id, approve: true) }
+                        } label: {
+                            if model.resolvingModeRequestID == request.id {
+                                ProgressView()
+                                    .tint(BellwireTheme.accentInk)
+                            } else {
+                                Text("Approve")
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(BellwireTheme.accent)
                     }
+                    .disabled(model.resolvingModeRequestID != nil)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(BellwireSpacing.standard)
                 .bellwireSurface(elevated: false)
             }

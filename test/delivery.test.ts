@@ -15,6 +15,7 @@ import {
   type ApnsSender,
   type ApnsSenderFactory,
 } from "../src/services/delivery-processor";
+import { ModeRequestNotificationProcessor } from "../src/services/mode-request-notification-processor";
 import { renderNotification } from "../src/services/notification-renderer";
 import { PrivateWakeProcessor } from "../src/services/private-wake-processor";
 
@@ -130,6 +131,33 @@ async function repositoryWithQueuedDelivery(options: {
 }
 
 describe("notification delivery", () => {
+  it("sends an actionable control notification for a pending mode request", async () => {
+    const repository = await seededRepository();
+    const request = await repository.saveDeliveryModeChangeRequest({
+      id: "mode-request-1",
+      projectId: project.id,
+      userId: project.userId,
+      requestedByTokenId: "agent-1",
+      fromMode: "hosted",
+      toMode: "private",
+      status: "pending",
+      createdAt: timestamp,
+      expiresAt: "2026-07-21T10:00:00.000Z",
+    });
+    const send = vi.fn<ApnsSender["send"]>().mockResolvedValue({ providerMessageId: "apns-mode" });
+
+    await new ModeRequestNotificationProcessor(repository, { send })
+      .process(request.id, project.userId);
+
+    expect(send).toHaveBeenCalledWith(device.apnsToken, expect.objectContaining({
+      title: "Approval needed",
+      body: "Bellwire Store requests Private delivery",
+      projectId: project.id,
+      deliveryMode: "hosted",
+      modeRequest: { id: request.id, toMode: "private" },
+    }));
+  });
+
   it("renders safe templates without leaking sensitive fields", () => {
     const notification = renderNotification(
       project,
@@ -581,6 +609,46 @@ describe("APNs client", () => {
     expect(payload).not.toHaveProperty("wakeId");
     expect(payload).not.toHaveProperty("eventId");
     expect(payload).not.toHaveProperty("projectLogoUrl");
+  });
+
+  it("includes the Settings deep link in a mode request notification", async () => {
+    let captured: Request | undefined;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      captured = new Request(input, init);
+      return new Response(null, { status: 200 });
+    };
+    const client = new ApnsClient({
+      keyId: "KEY123",
+      teamId: "TEAM123",
+      bundleId: "app.bellwire",
+      urlScheme: "bellwire",
+      privateKey: await privateKeyPEM(),
+      environment: "sandbox",
+    }, fetchImpl);
+
+    await client.send("abc123", {
+      title: "Approval needed",
+      body: "VideoSays requests Private delivery",
+      signalId: "mode-request-1",
+      threadId: "mode-request:project-123",
+      priority: "high",
+      projectId: "project-123",
+      deliveryMode: "hosted",
+      modeRequest: { id: "mode-request-1", toMode: "private" },
+    });
+
+    expect(await captured?.json()).toMatchObject({
+      aps: {
+        alert: {
+          title: "Approval needed",
+          body: "VideoSays requests Private delivery",
+        },
+      },
+      bellwireControlAction: "mode_request",
+      modeRequestId: "mode-request-1",
+      requestedDeliveryMode: "private",
+      deepLink: "bellwire://settings/mode-requests",
+    });
   });
 });
 
