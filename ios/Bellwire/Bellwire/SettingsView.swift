@@ -405,23 +405,30 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: BellwireSpacing.small) {
-                        Button("Reject", role: .cancel) {
+                        Button(role: .cancel) {
                             Task { await model.resolveModeRequest(id: request.id, approve: false) }
+                        } label: {
+                            Text("Reject")
+                                .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .buttonStyle(.bordered)
                         Button {
                             Task { await model.resolveModeRequest(id: request.id, approve: true) }
                         } label: {
-                            if model.resolvingModeRequestID == request.id {
-                                ProgressView()
-                                    .tint(BellwireTheme.accentInk)
-                            } else {
+                            ZStack {
                                 Text("Approve")
+                                    .opacity(model.resolvingModeRequestID == request.id ? 0 : 1)
+                                if model.resolvingModeRequestID == request.id {
+                                    ProgressView()
+                                        .tint(BellwireTheme.accentInk)
+                                }
                             }
+                            .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(BellwireTheme.accent)
                     }
+                    .frame(maxWidth: .infinity)
                     .disabled(model.resolvingModeRequestID != nil)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -429,6 +436,7 @@ struct SettingsView: View {
                 .bellwireSurface(elevated: false)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func planMetric(_ value: Int, _ limit: Int, _ title: LocalizedStringKey) -> some View {
